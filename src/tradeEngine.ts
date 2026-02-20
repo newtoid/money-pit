@@ -12,8 +12,6 @@ type TopOfBook = {
 type QuoteState = {
     lastPlacedBid: number | null;
     lastPlacedAsk: number | null;
-    lastPlacedNoBid: number | null;
-    lastPlacedNoAsk: number | null;
     lastQuoteAt: number;
     reconnects: number;
     marketMessages: number;
@@ -21,7 +19,6 @@ type QuoteState = {
     parsedBookUpdates: number;
     ignoredMarketMessages: number;
     currentYesPosition: number;
-    currentNoPosition: number;
     quoteCycles: number;
     skippedInsufficientCollateral: number;
     orderErrors: number;
@@ -33,6 +30,7 @@ type QuoteState = {
 type EngineOpts = {
     marketId: string;
     tokenIds: string[];
+    marketEndUnixSec?: number | null;
     clobClient: ClobClient | null;
     dryRun: boolean;
     tradingEnabled: boolean;
@@ -41,9 +39,13 @@ type EngineOpts = {
 type LastQuote = {
     at: number;
     fairYes: number;
-    yes: { bid: number; ask: number; skew: number };
-    no: { bid: number; ask: number; skew: number };
-    inventory: { yes: number; no: number };
+    bid: number;
+    ask: number;
+    skew: number;
+    lagSkew: number;
+    lagBps: number | null;
+    lagMode: "bullish_yes" | "bearish_yes" | "neutral";
+    inventory: number;
     mode: "dry_run" | "live";
 } | null;
 
@@ -82,7 +84,9 @@ function parseRawAllowance(payload: any): bigint {
             try {
                 const n = BigInt(String(v));
                 if (n > best) best = n;
-            } catch {}
+            } catch {
+                // ignore malformed value
+            }
         }
         return best;
     }
@@ -149,6 +153,15 @@ function getEnvInt(name: string, fallback: number): number {
     return Math.floor(v);
 }
 
+function getEnvBool(name: string, fallback: boolean): boolean {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === "") return fallback;
+    const v = String(raw).trim().toLowerCase();
+    if (["true", "1", "yes", "y", "on"].includes(v)) return true;
+    if (["false", "0", "no", "n", "off"].includes(v)) return false;
+    return fallback;
+}
+
 export class TradeEngine {
     private readonly marketId: string;
     private readonly tokenIds: string[];
@@ -162,12 +175,9 @@ export class TradeEngine {
     private readonly halfSpread = getEnvNumber("HALF_SPREAD", 0.01);
     private readonly orderSize = getEnvNumber("ORDER_SIZE", 5);
     private readonly maxPosition = Math.max(1, getEnvNumber("MAX_POSITION", 100));
-    private readonly inventoryTarget = getEnvNumber("INVENTORY_TARGET", 0);
-    private readonly inventorySkewMax = Math.max(0, getEnvNumber("INVENTORY_SKEW_MAX", 0));
-    private readonly inventorySkewStart = Math.min(0.99, Math.max(0, getEnvNumber("INVENTORY_SKEW_START", 0.3)));
     private readonly requoteTickThreshold = getEnvInt("REQUOTE_TICK_THRESHOLD", 1);
-    private readonly minRequoteMs = getEnvInt("MIN_REQUOTE_MS", 4000);
-    private readonly forceRequoteMs = Math.max(this.minRequoteMs, getEnvInt("FORCE_REQUOTE_MS", 15000));
+    private readonly minRequoteMs = getEnvInt("MIN_REQUOTE_MS", 3000);
+    private readonly forceRequoteMs = Math.max(this.minRequoteMs, getEnvInt("FORCE_REQUOTE_MS", 8000));
     private readonly statusEveryMs = getEnvInt("STATUS_EVERY_MS", 30000);
     private readonly positionPollMs = Math.max(3000, getEnvInt("POSITION_POLL_MS", 8000));
     private readonly allowShortSell = env.ALLOW_SHORT_SELL;
@@ -177,13 +187,22 @@ export class TradeEngine {
     private readonly takeProfitPct = env.TAKE_PROFIT_PCT;
     private readonly minOrderSize = Math.max(0, getEnvNumber("MIN_ORDER_SIZE", 5));
     private readonly minBuyNotionalUsdc = Math.max(0, getEnvNumber("MIN_BUY_NOTIONAL_USDC", 1));
+    private readonly dustRecoveryEnabled = getEnvBool("DUST_RECOVERY_ENABLED", true);
+    private readonly noNewOrdersBeforeEndSec = Math.max(0, getEnvInt("NO_NEW_ORDERS_BEFORE_END", 30));
+    private readonly cancelAllBeforeEndSec = Math.max(0, getEnvInt("CANCEL_ALL_BEFORE_END", 15));
+    private readonly lagArbEnabled = getEnvBool("LAG_ARB_ENABLED", true);
+    private readonly lagEnterBps = Math.max(0, getEnvNumber("LAG_ENTER_BPS", 4));
+    private readonly lagExitBps = Math.max(0, getEnvNumber("LAG_EXIT_BPS", 2));
+    private readonly lagMaxSkew = Math.max(0, getEnvNumber("MAX_LAG_SKEW", 0.01));
+    private readonly lagSizeMult = Math.max(1, getEnvNumber("LAG_SIZE_MULT", 1.25));
+    private readonly lagStaleMs = Math.max(500, getEnvInt("LAG_STALE_MS", 2500));
+    private readonly lagDisableBeforeEndSec = Math.max(0, getEnvInt("LAG_DISABLE_BEFORE_END_SEC", 35));
+    private readonly signalK = Math.max(1, getEnvNumber("SIGNAL_K", 60));
 
     private readonly books = new Map<string, TopOfBook>();
     private readonly state: QuoteState = {
         lastPlacedBid: null,
         lastPlacedAsk: null,
-        lastPlacedNoBid: null,
-        lastPlacedNoAsk: null,
         lastQuoteAt: 0,
         reconnects: 0,
         marketMessages: 0,
@@ -191,7 +210,6 @@ export class TradeEngine {
         parsedBookUpdates: 0,
         ignoredMarketMessages: 0,
         currentYesPosition: 0,
-        currentNoPosition: 0,
         quoteCycles: 0,
         skippedInsufficientCollateral: 0,
         orderErrors: 0,
@@ -199,15 +217,14 @@ export class TradeEngine {
         sellOrdersPlaced: 0,
         fills: 0,
     };
+
     private statusTimer: NodeJS.Timeout | null = null;
     private bookPollTimer: NodeJS.Timeout | null = null;
     private positionPollTimer: NodeJS.Timeout | null = null;
     private inFlight = false;
     private lastQuote: LastQuote = null;
     private avgEntryPriceYes = 0;
-    private avgEntryPriceNo = 0;
     private realizedPnlYes = 0;
-    private realizedPnlNo = 0;
     private lastFill: { at: number; tokenId: string; side: string; size: number; price: number } | null = null;
     private lastInsufficientCollateralLogAt = 0;
     private collateral: CollateralState = {
@@ -218,7 +235,13 @@ export class TradeEngine {
     };
     private lastAllowanceSyncAttemptAt = 0;
     private lastPositionPollErrorAt = 0;
+    private lastCancelAllAt = 0;
     private readonly makerAddress: string | null;
+    private readonly marketEndUnixSec: number | null;
+    private spotMoveBps: number | null = null;
+    private spotUpdatedAt: number | null = null;
+    private spotConnected = false;
+    private lagRegime: -1 | 0 | 1 = 0;
 
     constructor(opts: EngineOpts) {
         this.marketId = opts.marketId;
@@ -228,6 +251,7 @@ export class TradeEngine {
         this.clobClient = opts.clobClient;
         this.dryRun = opts.dryRun;
         this.tradingEnabled = opts.tradingEnabled;
+        this.marketEndUnixSec = opts.marketEndUnixSec ?? null;
         this.makerAddress = this.resolveMakerAddress();
     }
 
@@ -248,20 +272,17 @@ export class TradeEngine {
                     yesTop: yes ? { bid: yes.bid, ask: yes.ask } : null,
                     noTop: no ? { bid: no.bid, ask: no.ask } : null,
                     lastPlaced: {
-                        yesBid: this.state.lastPlacedBid,
-                        yesAsk: this.state.lastPlacedAsk,
-                        noBid: this.state.lastPlacedNoBid,
-                        noAsk: this.state.lastPlacedNoAsk,
+                        bid: this.state.lastPlacedBid,
+                        ask: this.state.lastPlacedAsk,
                         at: this.state.lastQuoteAt || null,
                     },
                     dryRun: this.dryRun,
-            marketMessages: this.state.marketMessages,
+                    marketMessages: this.state.marketMessages,
                     userMessages: this.state.userMessages,
                     reconnects: this.state.reconnects,
                     parsedBookUpdates: this.state.parsedBookUpdates,
                     ignoredMarketMessages: this.state.ignoredMarketMessages,
                     currentYesPosition: this.state.currentYesPosition,
-                    currentNoPosition: this.state.currentNoPosition,
                     quoteCycles: this.state.quoteCycles,
                     skippedInsufficientCollateral: this.state.skippedInsufficientCollateral,
                     orderErrors: this.state.orderErrors,
@@ -269,9 +290,7 @@ export class TradeEngine {
                     sellOrdersPlaced: this.state.sellOrdersPlaced,
                     fills: this.state.fills,
                     realizedPnlYes: Number(this.realizedPnlYes.toFixed(4)),
-                    realizedPnlNo: Number(this.realizedPnlNo.toFixed(4)),
                     unrealizedPnlYes: Number(this.unrealizedPnlYes().toFixed(4)),
-                    unrealizedPnlNo: Number(this.unrealizedPnlNo().toFixed(4)),
                     inventoryNotionalUsdc: Number(this.inventoryNotionalUsdc().toFixed(4)),
                     collateral: {
                         balanceRaw: this.collateral.balanceRaw.toString(),
@@ -291,6 +310,7 @@ export class TradeEngine {
         this.positionPollTimer = setInterval(() => {
             void this.refreshPositionFromDataApi();
         }, this.positionPollMs);
+
         void this.refreshPositionFromDataApi();
     }
 
@@ -307,9 +327,9 @@ export class TradeEngine {
         this.state.reconnects += 1;
     }
 
-    onUserMessage(_msg: unknown) {
+    onUserMessage(msg: unknown) {
         this.state.userMessages += 1;
-        this.applyInventoryUpdateFromUserMessage(_msg);
+        this.applyInventoryUpdateFromUserMessage(msg);
     }
 
     onMarketMessage(msg: unknown) {
@@ -320,7 +340,6 @@ export class TradeEngine {
             const payload: any = event;
             let parsed = false;
 
-            // Snapshot-style book messages.
             const tokenId = String(payload.asset_id ?? payload.assetId ?? payload.token_id ?? payload.tokenId ?? "");
             const hasBookArrays =
                 Array.isArray(payload.bids)
@@ -328,21 +347,13 @@ export class TradeEngine {
                 || Array.isArray(payload.buys)
                 || Array.isArray(payload.sells);
             if (tokenId && this.tokenIds.includes(tokenId) && hasBookArrays) {
-                const { bid, ask } = bestBidAsk(
-                    payload.bids ?? payload.buys,
-                    payload.asks ?? payload.sells,
-                );
-                this.books.set(tokenId, {
-                    bid,
-                    ask,
-                    updatedAt: Date.now(),
-                });
+                const { bid, ask } = bestBidAsk(payload.bids ?? payload.buys, payload.asks ?? payload.sells);
+                this.books.set(tokenId, { bid, ask, updatedAt: Date.now() });
                 this.state.parsedBookUpdates += 1;
                 parsed = true;
                 continue;
             }
 
-            // Incremental book update messages.
             const changes = Array.isArray(payload.price_changes) ? payload.price_changes : [];
             for (const ch of changes) {
                 const changeTokenId = String(ch?.asset_id ?? "");
@@ -359,7 +370,6 @@ export class TradeEngine {
                 parsed = true;
             }
 
-            // Lightweight best bid/ask message.
             if (payload.event_type === "best_bid_ask") {
                 const bbaTokenId = String(payload.asset_id ?? "");
                 if (!bbaTokenId || !this.tokenIds.includes(bbaTokenId)) continue;
@@ -393,6 +403,16 @@ export class TradeEngine {
         void this.maybeQuote();
     }
 
+    updateSpotSignal(snapshot: {
+        spotMoveBps: number | null;
+        updatedAt: number | null;
+        connected: boolean;
+    }) {
+        this.spotMoveBps = snapshot.spotMoveBps;
+        this.spotUpdatedAt = snapshot.updatedAt;
+        this.spotConnected = snapshot.connected;
+    }
+
     private currentFairYes(): number | null {
         const yes = this.books.get(this.yesTokenId);
         const no = this.books.get(this.noTokenId);
@@ -400,16 +420,12 @@ export class TradeEngine {
         if (yes.bid === null || yes.ask === null || no.bid === null || no.ask === null) return null;
         const yesMid = (yes.bid + yes.ask) / 2;
         const noMid = (no.bid + no.ask) / 2;
-        // Complement-consistent fair value.
         return clampPrice((yesMid + (1 - noMid)) / 2);
     }
 
-    private quoteFromFair(fairValue: number, inventory: number): { bid: number; ask: number; skew: number } {
-        const skew = this.computeInventorySkew(inventory);
-        const min = this.tickSize;
-        const max = 1 - this.tickSize;
-        const rawBid = clampToTickBounds(fairValue - this.halfSpread - skew, this.tickSize);
-        const rawAsk = clampToTickBounds(fairValue + this.halfSpread - skew, this.tickSize);
+    private quoteFromFair(fairYes: number, skew: number): { bid: number; ask: number; skew: number } {
+        const rawBid = clampToTickBounds(fairYes - this.halfSpread + skew, this.tickSize);
+        const rawAsk = clampToTickBounds(fairYes + this.halfSpread + skew, this.tickSize);
 
         let bid = roundDownToTick(rawBid, this.tickSize);
         let ask = roundUpToTick(rawAsk, this.tickSize);
@@ -418,45 +434,81 @@ export class TradeEngine {
         ask = clampToTickBounds(ask, this.tickSize);
 
         if (ask <= bid) {
-            if (bid + this.tickSize <= max) {
-                ask = bid + this.tickSize;
-            } else if (ask - this.tickSize >= min) {
-                bid = ask - this.tickSize;
-            } else {
-                bid = min;
-                ask = Math.min(max, min + this.tickSize);
-            }
+            ask = clampToTickBounds(bid + this.tickSize, this.tickSize);
         }
 
         return {
-            bid: Number(clampToTickBounds(bid, this.tickSize).toFixed(4)),
-            ask: Number(clampToTickBounds(ask, this.tickSize).toFixed(4)),
-            skew: Number(skew.toFixed(6)),
+            bid: Number(bid.toFixed(4)),
+            ask: Number(ask.toFixed(4)),
+            skew: Number(skew.toFixed(4)),
         };
     }
 
-    private shouldRequote(next: {
-        yesBid: number; yesAsk: number; noBid: number; noAsk: number;
-    }) {
+    private computeLagDecision(fairYes: number, secondsToEnd: number | null): {
+        lagSkew: number;
+        lagBps: number | null;
+        lagMode: "bullish_yes" | "bearish_yes" | "neutral";
+        buyMult: number;
+        sellMult: number;
+        reason: string;
+    } {
+        if (!this.lagArbEnabled) {
+            this.lagRegime = 0;
+            return { lagSkew: 0, lagBps: null, lagMode: "neutral", buyMult: 1, sellMult: 1, reason: "disabled" };
+        }
+        if (secondsToEnd !== null && secondsToEnd <= this.lagDisableBeforeEndSec) {
+            this.lagRegime = 0;
+            return { lagSkew: 0, lagBps: null, lagMode: "neutral", buyMult: 1, sellMult: 1, reason: "near_market_end" };
+        }
+        if (!this.spotConnected || this.spotMoveBps === null || !this.spotUpdatedAt) {
+            this.lagRegime = 0;
+            return { lagSkew: 0, lagBps: null, lagMode: "neutral", buyMult: 1, sellMult: 1, reason: "spot_unavailable" };
+        }
+        if (Date.now() - this.spotUpdatedAt > this.lagStaleMs) {
+            this.lagRegime = 0;
+            return { lagSkew: 0, lagBps: null, lagMode: "neutral", buyMult: 1, sellMult: 1, reason: "spot_stale" };
+        }
+
+        const polyImpliedMoveBps = ((fairYes - 0.5) / this.signalK) * 10000;
+        const lagBps = this.spotMoveBps - polyImpliedMoveBps;
+
+        if (lagBps >= this.lagEnterBps) this.lagRegime = 1;
+        else if (lagBps <= -this.lagEnterBps) this.lagRegime = -1;
+        else if (this.lagRegime === 1 && lagBps <= this.lagExitBps) this.lagRegime = 0;
+        else if (this.lagRegime === -1 && lagBps >= -this.lagExitBps) this.lagRegime = 0;
+
+        if (this.lagRegime === 0) {
+            return { lagSkew: 0, lagBps, lagMode: "neutral", buyMult: 1, sellMult: 1, reason: "inside_hysteresis" };
+        }
+
+        const amplitude = Math.min(1, Math.max(0, (Math.abs(lagBps) - this.lagExitBps) / Math.max(1, this.lagEnterBps)));
+        const lagSkew = this.lagMaxSkew * amplitude * this.lagRegime;
+        return {
+            lagSkew,
+            lagBps,
+            lagMode: this.lagRegime > 0 ? "bullish_yes" : "bearish_yes",
+            buyMult: this.lagRegime > 0 ? this.lagSizeMult : 1,
+            sellMult: this.lagRegime < 0 ? this.lagSizeMult : 1,
+            reason: "active",
+        };
+    }
+
+    private shouldRequote(nextBid: number, nextAsk: number) {
         const now = Date.now();
-        if (
-            this.state.lastPlacedBid === null
-            || this.state.lastPlacedAsk === null
-            || this.state.lastPlacedNoBid === null
-            || this.state.lastPlacedNoAsk === null
-        ) return true;
+        if (this.state.lastPlacedBid === null || this.state.lastPlacedAsk === null) return true;
         if (now - this.state.lastQuoteAt < this.minRequoteMs) return false;
         if (now - this.state.lastQuoteAt >= this.forceRequoteMs) return true;
-        const yesBidTicks = Math.abs(next.yesBid - this.state.lastPlacedBid) / this.tickSize;
-        const yesAskTicks = Math.abs(next.yesAsk - this.state.lastPlacedAsk) / this.tickSize;
-        const noBidTicks = Math.abs(next.noBid - this.state.lastPlacedNoBid) / this.tickSize;
-        const noAskTicks = Math.abs(next.noAsk - this.state.lastPlacedNoAsk) / this.tickSize;
-        return (
-            yesBidTicks >= this.requoteTickThreshold
-            || yesAskTicks >= this.requoteTickThreshold
-            || noBidTicks >= this.requoteTickThreshold
-            || noAskTicks >= this.requoteTickThreshold
-        );
+        const bidTicks = Math.abs(nextBid - this.state.lastPlacedBid) / this.tickSize;
+        const askTicks = Math.abs(nextAsk - this.state.lastPlacedAsk) / this.tickSize;
+        return bidTicks >= this.requoteTickThreshold || askTicks >= this.requoteTickThreshold;
+    }
+
+    private normalizeOrderSize(size: number, price: number, isBuy: boolean): number {
+        if (!Number.isFinite(size) || size <= 0) return 0;
+        const normalized = Math.floor(size * 100) / 100;
+        if (normalized < this.minOrderSize) return 0;
+        if (isBuy && normalized * price < this.minBuyNotionalUsdc) return 0;
+        return normalized;
     }
 
     private async maybeQuote() {
@@ -465,163 +517,228 @@ export class TradeEngine {
         if (fairYes === null) return;
         this.state.quoteCycles += 1;
 
-        const nextYes = this.quoteFromFair(fairYes, this.state.currentYesPosition);
-        const nextNo = this.quoteFromFair(1 - fairYes, this.state.currentNoPosition);
-        if (!this.shouldRequote({
-            yesBid: nextYes.bid,
-            yesAsk: nextYes.ask,
-            noBid: nextNo.bid,
-            noAsk: nextNo.ask,
-        })) return;
+        const secondsToEnd = this.secondsToMarketEnd();
+        if (
+            secondsToEnd !== null
+            && this.cancelAllBeforeEndSec > 0
+            && secondsToEnd <= this.cancelAllBeforeEndSec
+        ) {
+            const now = Date.now();
+            if (now - this.lastCancelAllAt >= 3000) {
+                this.lastCancelAllAt = now;
+                await this.cancelAllYesOrders();
+                logger.info(
+                    { marketId: this.marketId, secondsToEnd, cancelAllBeforeEndSec: this.cancelAllBeforeEndSec },
+                    "Canceled all orders near market end",
+                );
+            }
+            return;
+        }
+        if (
+            secondsToEnd !== null
+            && this.noNewOrdersBeforeEndSec > 0
+            && secondsToEnd <= this.noNewOrdersBeforeEndSec
+        ) {
+            return;
+        }
+
+        const lag = this.computeLagDecision(fairYes, secondsToEnd);
+        const next = this.quoteFromFair(fairYes, lag.lagSkew);
+        if (!this.shouldRequote(next.bid, next.ask)) return;
 
         this.inFlight = true;
         try {
-            const currentYes = this.state.currentYesPosition;
-            const currentNo = this.state.currentNoPosition;
+            const currentPos = this.state.currentYesPosition;
+            const remainingByPosition = Math.max(0, this.maxPosition - currentPos);
+            const remainingNotional = Math.max(0, this.maxInventoryNotionalUsdc - this.inventoryNotionalUsdc());
+            const remainingByNotional = next.bid > 0 ? remainingNotional / next.bid : 0;
 
-            let remainingNotional = Math.max(0, this.maxInventoryNotionalUsdc - this.inventoryNotionalUsdc());
-            const yesRemainingByPosition = Math.max(0, this.maxPosition - currentYes);
-            const noRemainingByPosition = Math.max(0, this.maxPosition - currentNo);
-            let buyYesSize = Math.max(0, Math.min(this.orderSize, yesRemainingByPosition, nextYes.bid > 0 ? remainingNotional / nextYes.bid : 0));
-            remainingNotional = Math.max(0, remainingNotional - (buyYesSize * nextYes.bid));
-            let buyNoSize = Math.max(0, Math.min(this.orderSize, noRemainingByPosition, nextNo.bid > 0 ? remainingNotional / nextNo.bid : 0));
+            let buySize = Math.max(0, Math.min(this.orderSize * lag.buyMult, remainingByPosition, remainingByNotional));
+            let sellSize = Math.max(0, Math.min(this.orderSize * lag.sellMult, currentPos));
 
-            let sellYesSize = this.allowShortSell ? this.orderSize : Math.max(0, Math.min(this.orderSize, currentYes));
-            let sellNoSize = this.allowShortSell ? this.orderSize : Math.max(0, Math.min(this.orderSize, currentNo));
+            const profitableExit = this.takeProfitSignal();
+            let effectiveBid = next.bid;
+            let effectiveAsk = next.ask;
+            let dustRecoveryShortSell = false;
 
-            const yesTakeProfit = this.takeProfitSignal(this.yesTokenId, currentYes, this.avgEntryPriceYes);
-            const noTakeProfit = this.takeProfitSignal(this.noTokenId, currentNo, this.avgEntryPriceNo);
-
-            let effectiveYesBid = nextYes.bid;
-            let effectiveYesAsk = nextYes.ask;
-            let effectiveNoBid = nextNo.bid;
-            let effectiveNoAsk = nextNo.ask;
-
-            if (yesTakeProfit.active) {
-                buyYesSize = 0;
-                effectiveYesAsk = yesTakeProfit.exitPrice;
+            if (profitableExit.active) {
+                buySize = 0;
+                effectiveAsk = profitableExit.exitPrice;
+                // On take-profit, prioritize flattening inventory quickly.
+                sellSize = Math.max(0, currentPos);
+                // Dust recovery: if inventory is positive but below venue min size,
+                // optionally send a minimum-size TP exit (can transiently go short).
+                if (
+                    this.allowShortSell
+                    && this.dustRecoveryEnabled
+                    && currentPos > 0
+                    && currentPos < this.minOrderSize
+                ) {
+                    sellSize = this.minOrderSize;
+                    dustRecoveryShortSell = true;
+                }
             }
-            if (noTakeProfit.active) {
-                buyNoSize = 0;
-                effectiveNoAsk = noTakeProfit.exitPrice;
+
+            // Avoid creating unsellable "dust" below min order size on non-TP exits.
+            if (!this.allowShortSell && !profitableExit.active) {
+                const remainder = Math.max(0, currentPos - sellSize);
+                if (remainder > 0 && remainder < this.minOrderSize && currentPos >= this.minOrderSize) {
+                    sellSize = currentPos;
+                }
             }
-            buyYesSize = this.normalizeOrderSize(buyYesSize, effectiveYesBid, true);
-            buyNoSize = this.normalizeOrderSize(buyNoSize, effectiveNoBid, true);
-            sellYesSize = this.normalizeOrderSize(sellYesSize, effectiveYesAsk, false);
-            sellNoSize = this.normalizeOrderSize(sellNoSize, effectiveNoAsk, false);
+
+            buySize = this.normalizeOrderSize(buySize, effectiveBid, true);
+            sellSize = this.normalizeOrderSize(sellSize, effectiveAsk, false);
 
             if (this.dryRun || !this.tradingEnabled || !this.clobClient) {
                 this.lastQuote = {
                     at: Date.now(),
                     fairYes,
-                    yes: { bid: nextYes.bid, ask: nextYes.ask, skew: nextYes.skew },
-                    no: { bid: nextNo.bid, ask: nextNo.ask, skew: nextNo.skew },
-                    inventory: { yes: currentYes, no: currentNo },
+                    bid: next.bid,
+                    ask: next.ask,
+                    skew: next.skew,
+                    lagSkew: lag.lagSkew,
+                    lagBps: lag.lagBps,
+                    lagMode: lag.lagMode,
+                    inventory: this.state.currentYesPosition,
                     mode: "dry_run",
                 };
                 logger.info(
                     {
                         marketId: this.marketId,
                         yesTokenId: this.yesTokenId,
-                        noTokenId: this.noTokenId,
                         fairYes,
-                        yesQuote: { bid: effectiveYesBid, ask: effectiveYesAsk, skew: nextYes.skew },
-                        noQuote: { bid: effectiveNoBid, ask: effectiveNoAsk, skew: nextNo.skew },
+                        quote: { bid: effectiveBid, ask: effectiveAsk, skew: next.skew },
+                        lag: {
+                            enabled: this.lagArbEnabled,
+                            mode: lag.lagMode,
+                            bps: lag.lagBps,
+                            skew: lag.lagSkew,
+                            reason: lag.reason,
+                        },
                         orderSize: this.orderSize,
-                        buyYesSize,
-                        sellYesSize,
-                        buyNoSize,
-                        sellNoSize,
+                        buySize,
+                        sellSize,
                         tradingEnabled: this.tradingEnabled,
-                        inventory: { yes: currentYes, no: currentNo },
-                        takeProfitActive: { yes: yesTakeProfit.active, no: noTakeProfit.active },
+                        inventory: this.state.currentYesPosition,
+                        takeProfitEnabled: this.takeProfitEnabled,
+                        takeProfitActive: profitableExit.active,
+                        takeProfitReason: profitableExit.reason,
                     },
                     this.tradingEnabled ? "DRY_RUN quote decision" : "TRADING_DISABLED quote decision",
                 );
             } else {
-                const yesOpen = await this.clobClient.getOpenOrders({ asset_id: this.yesTokenId });
-                const noOpen = await this.clobClient.getOpenOrders({ asset_id: this.noTokenId });
-                const orderIds = [
-                    ...(Array.isArray(yesOpen) ? yesOpen : []),
-                    ...(Array.isArray(noOpen) ? noOpen : []),
-                ].map((o: any) => String(o.id)).filter(Boolean);
-                if (orderIds.length > 0) {
-                    await this.clobClient.cancelOrders(orderIds);
-                    logger.info({ count: orderIds.length }, "Canceled stale YES/NO orders");
-                }
+                await this.cancelAllYesOrders();
 
                 await this.refreshCollateral();
-                let availableRaw = this.collateral.balanceRaw < this.collateral.allowanceRaw
+                const availableRaw = this.collateral.balanceRaw < this.collateral.allowanceRaw
                     ? this.collateral.balanceRaw
                     : this.collateral.allowanceRaw;
 
-                const placeBuy = async (tokenID: string, size: number, price: number) => {
-                    if (size <= 0) return { placed: false, reason: "size_zero" };
-                    const requiredBuyRaw = BigInt(Math.ceil(size * price * 1_000_000));
-                    if (availableRaw < requiredBuyRaw) {
-                        this.state.skippedInsufficientCollateral += 1;
-                        return { placed: false, reason: "insufficient_collateral", requiredBuyRaw };
-                    }
-                    await this.clobClient!.createAndPostOrder(
-                        { tokenID, side: Side.BUY, size, price },
-                        { tickSize: String(this.tickSize) as any },
-                        OrderType.GTC,
-                    );
-                    availableRaw -= requiredBuyRaw;
-                    this.state.buyOrdersPlaced += 1;
-                    return { placed: true as const };
-                };
-                const placeSell = async (tokenID: string, size: number, price: number) => {
-                    if (size <= 0) return { placed: false, reason: "size_zero" };
-                    await this.clobClient!.createAndPostOrder(
-                        { tokenID, side: Side.SELL, size, price },
-                        { tickSize: String(this.tickSize) as any },
-                        OrderType.GTC,
-                    );
-                    this.state.sellOrdersPlaced += 1;
-                    return { placed: true as const };
-                };
+                let buyPlaced = false;
+                let sellPlaced = false;
+                let buySkippedReason: string | null = null;
+                let sellSkippedReason: string | null = null;
 
-                const yesBuyResult = await placeBuy(this.yesTokenId, buyYesSize, effectiveYesBid);
-                const yesSellResult = await placeSell(this.yesTokenId, sellYesSize, effectiveYesAsk);
-                const noBuyResult = await placeBuy(this.noTokenId, buyNoSize, effectiveNoBid);
-                const noSellResult = await placeSell(this.noTokenId, sellNoSize, effectiveNoAsk);
+                if (buySize > 0) {
+                    const requiredBuyRaw = BigInt(Math.ceil(effectiveBid * buySize * 1_000_000));
+                    if (availableRaw >= requiredBuyRaw) {
+                        await this.clobClient.createAndPostOrder(
+                            {
+                                tokenID: this.yesTokenId,
+                                side: Side.BUY,
+                                size: buySize,
+                                price: effectiveBid,
+                            },
+                            { tickSize: String(this.tickSize) as any },
+                            OrderType.GTC,
+                        );
+                        buyPlaced = true;
+                        this.state.buyOrdersPlaced += 1;
+                    } else {
+                        buySkippedReason = "insufficient_collateral";
+                        this.state.skippedInsufficientCollateral += 1;
+                        const now = Date.now();
+                        if (now - this.lastInsufficientCollateralLogAt > 5000) {
+                            logger.warn(
+                                {
+                                    requiredBuyRaw: requiredBuyRaw.toString(),
+                                    availableRaw: availableRaw.toString(),
+                                    skippedCount: this.state.skippedInsufficientCollateral,
+                                },
+                                "Skipping BUY quote: insufficient collateral/allowance",
+                            );
+                            this.lastInsufficientCollateralLogAt = now;
+                        }
+                    }
+                } else {
+                    buySkippedReason = "size_below_constraints_or_risk_cap";
+                }
+
+                if (sellSize > 0) {
+                    await this.clobClient.createAndPostOrder(
+                        {
+                            tokenID: this.yesTokenId,
+                            side: Side.SELL,
+                            size: sellSize,
+                            price: effectiveAsk,
+                        },
+                        { tickSize: String(this.tickSize) as any },
+                        OrderType.GTC,
+                    );
+                    sellPlaced = true;
+                    this.state.sellOrdersPlaced += 1;
+                } else {
+                    if (profitableExit.active && currentPos > 0 && currentPos < this.minOrderSize) {
+                        sellSkippedReason = "tp_inventory_below_min_order_size";
+                    } else {
+                        sellSkippedReason = "insufficient_yes_inventory";
+                    }
+                }
 
                 this.lastQuote = {
                     at: Date.now(),
                     fairYes,
-                    yes: { bid: nextYes.bid, ask: nextYes.ask, skew: nextYes.skew },
-                    no: { bid: nextNo.bid, ask: nextNo.ask, skew: nextNo.skew },
-                    inventory: { yes: currentYes, no: currentNo },
+                    bid: next.bid,
+                    ask: next.ask,
+                    skew: next.skew,
+                    lagSkew: lag.lagSkew,
+                    lagBps: lag.lagBps,
+                    lagMode: lag.lagMode,
+                    inventory: this.state.currentYesPosition,
                     mode: "live",
                 };
                 logger.info(
                     {
                         yesTokenId: this.yesTokenId,
-                        noTokenId: this.noTokenId,
                         fairYes,
-                        yesQuote: { bid: effectiveYesBid, ask: effectiveYesAsk, skew: nextYes.skew },
-                        noQuote: { bid: effectiveNoBid, ask: effectiveNoAsk, skew: nextNo.skew },
+                        quote: { bid: effectiveBid, ask: effectiveAsk, skew: next.skew },
+                        lag: {
+                            enabled: this.lagArbEnabled,
+                            mode: lag.lagMode,
+                            bps: lag.lagBps,
+                            skew: lag.lagSkew,
+                            reason: lag.reason,
+                        },
                         orderSize: this.orderSize,
-                        buyYesSize,
-                        sellYesSize,
-                        buyNoSize,
-                        sellNoSize,
-                        inventory: { yes: currentYes, no: currentNo },
-                        yesBuyPlaced: yesBuyResult.placed,
-                        yesSellPlaced: yesSellResult.placed,
-                        noBuyPlaced: noBuyResult.placed,
-                        noSellPlaced: noSellResult.placed,
-                        takeProfitActive: { yes: yesTakeProfit.active, no: noTakeProfit.active },
+                        buySize,
+                        sellSize,
+                        inventory: this.state.currentYesPosition,
+                        buyPlaced,
+                        sellPlaced,
+                        takeProfitEnabled: this.takeProfitEnabled,
+                        takeProfitActive: profitableExit.active,
+                        takeProfitReason: profitableExit.reason,
+                        dustRecoveryShortSell,
+                        buySkippedReason,
+                        sellSkippedReason,
                     },
-                    "Posted YES/NO quote orders",
+                    "Posted YES quote orders",
                 );
             }
 
-            this.state.lastPlacedBid = nextYes.bid;
-            this.state.lastPlacedAsk = nextYes.ask;
-            this.state.lastPlacedNoBid = nextNo.bid;
-            this.state.lastPlacedNoAsk = nextNo.ask;
+            this.state.lastPlacedBid = next.bid;
+            this.state.lastPlacedAsk = next.ask;
             this.state.lastQuoteAt = Date.now();
         } catch (err) {
             this.state.orderErrors += 1;
@@ -631,32 +748,15 @@ export class TradeEngine {
         }
     }
 
-    private normalizeOrderSize(size: number, price: number, isBuy: boolean): number {
-        if (!Number.isFinite(size) || size <= 0) return 0;
-        let normalized = Math.floor(size * 100) / 100;
-        if (normalized < this.minOrderSize) return 0;
-        if (isBuy && normalized * price < this.minBuyNotionalUsdc) return 0;
-        return normalized;
-    }
-
-    private computeInventorySkew(position: number): number {
-        const inv = position - this.inventoryTarget;
-        const invNorm = Math.max(-1, Math.min(1, inv / this.maxPosition));
-        const excess = Math.max(0, Math.abs(invNorm) - this.inventorySkewStart) / (1 - this.inventorySkewStart);
-        const skew = this.inventorySkewMax * excess * Math.sign(invNorm);
-        return Number.isFinite(skew) ? skew : 0;
-    }
-
     private applyInventoryUpdateFromUserMessage(msg: unknown) {
         const events = Array.isArray(msg) ? msg : [msg];
-        let yesAbsolute: number | null = null;
-        let noAbsolute: number | null = null;
+        let absolute: number | null = null;
 
         for (const event of events) {
             if (!event || typeof event !== "object") continue;
             const e: any = event;
             const tokenId = String(e.asset_id ?? e.assetId ?? e.token_id ?? e.tokenId ?? "");
-            if (tokenId && tokenId !== this.yesTokenId && tokenId !== this.noTokenId) continue;
+            if (tokenId && tokenId !== this.yesTokenId) continue;
 
             const absValue =
                 toNumber(e.position)
@@ -664,40 +764,19 @@ export class TradeEngine {
                 ?? toNumber(e.net_position)
                 ?? null;
             if (absValue !== null && tokenId === this.yesTokenId) {
-                yesAbsolute = absValue;
-                continue;
+                absolute = absValue;
             }
-            if (absValue !== null && tokenId === this.noTokenId) {
-                noAbsolute = absValue;
-                continue;
-            }
-
         }
 
-        const beforeYes = this.state.currentYesPosition;
-        const beforeNo = this.state.currentNoPosition;
-        if (yesAbsolute !== null) this.state.currentYesPosition = yesAbsolute;
-        if (noAbsolute !== null) this.state.currentNoPosition = noAbsolute;
-
-        if (this.state.currentYesPosition !== beforeYes || this.state.currentNoPosition !== beforeNo) {
-            logger.info(
-                {
-                    before: { yes: beforeYes, no: beforeNo },
-                    after: { yes: this.state.currentYesPosition, no: this.state.currentNoPosition },
-                    skew: {
-                        yes: this.computeInventorySkew(this.state.currentYesPosition),
-                        no: this.computeInventorySkew(this.state.currentNoPosition),
-                    },
-                },
-                "Inventory updated",
-            );
+        if (absolute !== null) {
+            this.state.currentYesPosition = absolute;
         }
 
         for (const event of events) {
             if (!event || typeof event !== "object") continue;
             const e: any = event;
             const tokenId = String(e.asset_id ?? e.assetId ?? e.token_id ?? e.tokenId ?? "");
-            if (tokenId !== this.yesTokenId && tokenId !== this.noTokenId) continue;
+            if (tokenId && tokenId !== this.yesTokenId) continue;
             const side = String(e.side ?? "").toUpperCase();
             const price = toNumber(e.price);
             const size = toNumber(e.size) ?? toNumber(e.matched_size) ?? toNumber(e.amount);
@@ -708,21 +787,19 @@ export class TradeEngine {
                 || eventType.includes("match");
             if (!isFillLike || price === null || size === null || size <= 0) continue;
             if (side !== "BUY" && side !== "SELL") continue;
-            this.onFill(tokenId, side as "BUY" | "SELL", size, price);
+            this.onFill(side as "BUY" | "SELL", size, price);
         }
     }
 
     private resolveMakerAddress(): string | null {
         if (env.TRADING_USE_SIGNER_AS_MAKER) {
             const pk = process.env.PRIVATE_KEY?.trim();
-            if (pk) {
-                try {
-                    return new Wallet(pk).address;
-                } catch {
-                    return null;
-                }
+            if (!pk) return null;
+            try {
+                return new Wallet(pk).address;
+            } catch {
+                return null;
             }
-            return null;
         }
         return (
             env.TRADING_FUNDER_ADDRESS
@@ -739,52 +816,25 @@ export class TradeEngine {
         try {
             const url = `https://data-api.polymarket.com/positions?user=${encodeURIComponent(this.makerAddress)}&sizeThreshold=0`;
             const res = await fetch(url);
-            if (!res.ok) {
-                throw new Error(`positions HTTP ${res.status}`);
-            }
+            if (!res.ok) throw new Error(`positions HTTP ${res.status}`);
             const rows = (await res.json()) as PositionRow[];
             if (!Array.isArray(rows)) return;
 
             const yesToken = String(this.yesTokenId);
-            const noToken = String(this.noTokenId);
-            let yesSize = 0;
-            let yesAvg = 0;
-            let noSize = 0;
-            let noAvg = 0;
+            let size = 0;
+            let avg = 0;
             for (const row of rows) {
-                const asset = String(row?.asset ?? "");
-                if (asset === yesToken) {
-                    yesSize = toNumber(row?.size) ?? 0;
-                    yesAvg = toNumber(row?.avgPrice) ?? 0;
-                } else if (asset === noToken) {
-                    noSize = toNumber(row?.size) ?? 0;
-                    noAvg = toNumber(row?.avgPrice) ?? 0;
-                }
+                if (String(row?.asset ?? "") !== yesToken) continue;
+                size = toNumber(row?.size) ?? 0;
+                avg = toNumber(row?.avgPrice) ?? 0;
+                break;
             }
 
-            const beforeYes = this.state.currentYesPosition;
-            const beforeNo = this.state.currentNoPosition;
-            this.state.currentYesPosition = yesSize;
-            this.state.currentNoPosition = noSize;
-            this.avgEntryPriceYes = yesSize > 0 && yesAvg > 0 ? yesAvg : 0;
-            this.avgEntryPriceNo = noSize > 0 && noAvg > 0 ? noAvg : 0;
-
-            if (beforeYes !== this.state.currentYesPosition || beforeNo !== this.state.currentNoPosition) {
-                logger.info(
-                    {
-                        before: { yes: beforeYes, no: beforeNo },
-                        after: { yes: this.state.currentYesPosition, no: this.state.currentNoPosition },
-                        avgEntryPriceYes: Number(this.avgEntryPriceYes.toFixed(6)),
-                        avgEntryPriceNo: Number(this.avgEntryPriceNo.toFixed(6)),
-                        source: "data_api",
-                        makerAddress: this.makerAddress,
-                    },
-                    "Inventory updated",
-                );
-            }
+            this.state.currentYesPosition = size;
+            this.avgEntryPriceYes = size > 0 && avg > 0 ? avg : 0;
         } catch (err) {
             const now = Date.now();
-            if (now - this.lastPositionPollErrorAt > 15_000) {
+            if (now - this.lastPositionPollErrorAt > 15000) {
                 logger.warn(
                     {
                         err: err instanceof Error ? err.message : String(err),
@@ -808,14 +858,10 @@ export class TradeEngine {
                 const body = (await res.json()) as any;
                 const { bid, ask } = bestBidAsk(body?.bids, body?.asks);
                 if (bid === null && ask === null) continue;
-                this.books.set(tokenId, {
-                    bid,
-                    ask,
-                    updatedAt: Date.now(),
-                });
+                this.books.set(tokenId, { bid, ask, updatedAt: Date.now() });
                 this.state.parsedBookUpdates += 1;
             } catch {
-                // best-effort fallback; websocket still primary source.
+                // best effort
             }
         }
         void this.maybeQuote();
@@ -826,31 +872,17 @@ export class TradeEngine {
         if (Date.now() - this.collateral.updatedAt < this.collateralRefreshMs) return;
         try {
             const res = await this.clobClient.getBalanceAllowance({ asset_type: "COLLATERAL" as any });
-            const bal = BigInt(String((res as any)?.balance ?? "0"));
-            const alw = parseRawAllowance(res);
-            this.collateral.balanceRaw = bal;
-            this.collateral.allowanceRaw = alw;
+            this.collateral.balanceRaw = BigInt(String((res as any)?.balance ?? "0"));
+            this.collateral.allowanceRaw = parseRawAllowance(res);
             this.collateral.updatedAt = Date.now();
             this.collateral.lastError = null;
 
-            // If allowance is still zero, attempt a periodic sync/approval refresh.
             if (this.collateral.allowanceRaw === 0n) {
                 const now = Date.now();
-                if (now - this.lastAllowanceSyncAttemptAt > 60_000) {
+                if (now - this.lastAllowanceSyncAttemptAt > 60000) {
                     this.lastAllowanceSyncAttemptAt = now;
                     try {
                         await this.clobClient.updateBalanceAllowance({ asset_type: "COLLATERAL" as any });
-                        const retry = await this.clobClient.getBalanceAllowance({ asset_type: "COLLATERAL" as any });
-                        this.collateral.balanceRaw = BigInt(String((retry as any)?.balance ?? "0"));
-                        this.collateral.allowanceRaw = parseRawAllowance(retry);
-                        this.collateral.updatedAt = Date.now();
-                        logger.info(
-                            {
-                                balanceRaw: this.collateral.balanceRaw.toString(),
-                                allowanceRaw: this.collateral.allowanceRaw.toString(),
-                            },
-                            "Collateral allowance sync attempted",
-                        );
                     } catch (err) {
                         this.collateral.lastError = err instanceof Error ? err.message : String(err);
                     }
@@ -861,52 +893,29 @@ export class TradeEngine {
         }
     }
 
-    private async canAffordBuy(requiredRaw: bigint): Promise<{ ok: boolean; availableRaw?: bigint; reason?: string }> {
-        await this.refreshCollateral();
-        if (this.collateral.lastError) {
-            return { ok: false, reason: this.collateral.lastError };
-        }
-        const available = this.collateral.balanceRaw < this.collateral.allowanceRaw
-            ? this.collateral.balanceRaw
-            : this.collateral.allowanceRaw;
-        return {
-            ok: available >= requiredRaw,
-            availableRaw: available,
-            reason: available >= requiredRaw ? undefined : "balance_or_allowance_below_required",
-        };
-    }
-
-    private onFill(tokenId: string, side: "BUY" | "SELL", size: number, price: number) {
+    private onFill(side: "BUY" | "SELL", size: number, price: number) {
         this.state.fills += 1;
-        this.lastFill = { at: Date.now(), tokenId, side, size, price };
-        const isYes = tokenId === this.yesTokenId;
-        const pos = isYes ? this.state.currentYesPosition : this.state.currentNoPosition;
-        const avgEntry = isYes ? this.avgEntryPriceYes : this.avgEntryPriceNo;
+        this.lastFill = { at: Date.now(), tokenId: this.yesTokenId, side, size, price };
 
         if (side === "BUY") {
+            const pos = this.state.currentYesPosition;
             const nextPos = pos + size;
             if (nextPos > 0) {
-                const nextAvg = ((avgEntry * pos) + (price * size)) / nextPos;
-                if (isYes) this.avgEntryPriceYes = nextAvg;
-                else this.avgEntryPriceNo = nextAvg;
+                this.avgEntryPriceYes = ((this.avgEntryPriceYes * pos) + (price * size)) / nextPos;
             }
-            if (isYes) this.state.currentYesPosition = nextPos;
-            else this.state.currentNoPosition = nextPos;
+            this.state.currentYesPosition = nextPos;
             return;
         }
 
+        const pos = this.state.currentYesPosition;
         const closed = Math.min(Math.max(pos, 0), size);
         if (closed > 0) {
-            const pnl = (price - avgEntry) * closed;
-            if (isYes) this.realizedPnlYes += pnl;
-            else this.realizedPnlNo += pnl;
+            this.realizedPnlYes += (price - this.avgEntryPriceYes) * closed;
         }
         const nextPos = pos - size;
-        if (isYes) this.state.currentYesPosition = nextPos;
-        else this.state.currentNoPosition = nextPos;
+        this.state.currentYesPosition = nextPos;
         if (nextPos <= 0) {
-            if (isYes) this.avgEntryPriceYes = 0;
-            else this.avgEntryPriceNo = 0;
+            this.avgEntryPriceYes = 0;
         }
     }
 
@@ -917,34 +926,35 @@ export class TradeEngine {
         return (fair - this.avgEntryPriceYes) * this.state.currentYesPosition;
     }
 
-    private unrealizedPnlNo() {
-        const fair = this.currentFairYes();
-        if (fair === null) return 0;
-        if (this.state.currentNoPosition <= 0) return 0;
-        const fairNo = 1 - fair;
-        return (fairNo - this.avgEntryPriceNo) * this.state.currentNoPosition;
-    }
-
     private inventoryNotionalUsdc() {
-        const yesNotional = this.state.currentYesPosition > 0 ? this.state.currentYesPosition * this.avgEntryPriceYes : 0;
-        const noNotional = this.state.currentNoPosition > 0 ? this.state.currentNoPosition * this.avgEntryPriceNo : 0;
-        return yesNotional + noNotional;
+        if (this.state.currentYesPosition <= 0) return 0;
+        return this.state.currentYesPosition * this.avgEntryPriceYes;
     }
 
-    private takeProfitSignal(
-        tokenId: string,
-        position: number,
-        avgEntryPrice: number,
-    ): { active: boolean; exitPrice: number } {
-        if (!this.takeProfitEnabled) return { active: false, exitPrice: 0 };
-        if (position <= 0) return { active: false, exitPrice: 0 };
-        const book = this.books.get(tokenId);
-        const bestBid = book?.bid ?? null;
-        if (bestBid === null || avgEntryPrice <= 0) return { active: false, exitPrice: 0 };
-        const target = avgEntryPrice * (1 + this.takeProfitPct);
-        if (bestBid < target) return { active: false, exitPrice: 0 };
+    private takeProfitSignal(): { active: boolean; exitPrice: number; reason: string } {
+        if (!this.takeProfitEnabled) return { active: false, exitPrice: 0, reason: "disabled" };
+        if (this.state.currentYesPosition <= 0) return { active: false, exitPrice: 0, reason: "no_inventory" };
+        const yes = this.books.get(this.yesTokenId);
+        const bestBid = yes?.bid ?? null;
+        if (bestBid === null || this.avgEntryPriceYes <= 0) return { active: false, exitPrice: 0, reason: "missing_bid_or_entry" };
+        const target = this.avgEntryPriceYes * (1 + this.takeProfitPct);
+        if (bestBid < target) return { active: false, exitPrice: 0, reason: "target_not_reached" };
         const exitPrice = clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
-        return { active: true, exitPrice };
+        return { active: true, exitPrice, reason: "triggered" };
+    }
+
+    private secondsToMarketEnd(): number | null {
+        if (!this.marketEndUnixSec || !Number.isFinite(this.marketEndUnixSec)) return null;
+        return Math.floor(this.marketEndUnixSec - Date.now() / 1000);
+    }
+
+    private async cancelAllYesOrders() {
+        if (!this.clobClient) return;
+        const open = await this.clobClient.getOpenOrders({ asset_id: this.yesTokenId });
+        const orderIds = Array.isArray(open) ? open.map((o: any) => String(o.id)).filter(Boolean) : [];
+        if (orderIds.length > 0) {
+            await this.clobClient.cancelOrders(orderIds);
+        }
     }
 
     getSnapshot() {
@@ -957,15 +967,12 @@ export class TradeEngine {
             yesTop: yes ? { bid: yes.bid, ask: yes.ask, updatedAt: yes.updatedAt } : null,
             noTop: no ? { bid: no.bid, ask: no.ask, updatedAt: no.updatedAt } : null,
             lastPlaced: {
-                yesBid: this.state.lastPlacedBid,
-                yesAsk: this.state.lastPlacedAsk,
-                noBid: this.state.lastPlacedNoBid,
-                noAsk: this.state.lastPlacedNoAsk,
+                bid: this.state.lastPlacedBid,
+                ask: this.state.lastPlacedAsk,
                 at: this.state.lastQuoteAt || null,
             },
             lastQuote: this.lastQuote,
             currentYesPosition: this.state.currentYesPosition,
-            currentNoPosition: this.state.currentNoPosition,
             counters: {
                 reconnects: this.state.reconnects,
                 marketMessages: this.state.marketMessages,
@@ -983,11 +990,7 @@ export class TradeEngine {
                 realizedYes: Number(this.realizedPnlYes.toFixed(4)),
                 unrealizedYes: Number(this.unrealizedPnlYes().toFixed(4)),
                 netYes: Number((this.realizedPnlYes + this.unrealizedPnlYes()).toFixed(4)),
-                realizedNo: Number(this.realizedPnlNo.toFixed(4)),
-                unrealizedNo: Number(this.unrealizedPnlNo().toFixed(4)),
-                netNo: Number((this.realizedPnlNo + this.unrealizedPnlNo()).toFixed(4)),
                 avgEntryPriceYes: Number(this.avgEntryPriceYes.toFixed(6)),
-                avgEntryPriceNo: Number(this.avgEntryPriceNo.toFixed(6)),
                 inventoryNotionalUsdc: Number(this.inventoryNotionalUsdc().toFixed(4)),
                 lastFill: this.lastFill,
             },
@@ -999,6 +1002,17 @@ export class TradeEngine {
             },
             dryRun: this.dryRun,
             tradingEnabled: this.tradingEnabled,
+            lagArb: {
+                enabled: this.lagArbEnabled,
+                regime: this.lagRegime,
+                spotMoveBps: this.spotMoveBps,
+                spotUpdatedAt: this.spotUpdatedAt,
+                spotConnected: this.spotConnected,
+                enterBps: this.lagEnterBps,
+                exitBps: this.lagExitBps,
+                maxSkew: this.lagMaxSkew,
+                sizeMult: this.lagSizeMult,
+            },
         };
     }
 }
