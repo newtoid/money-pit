@@ -83,7 +83,8 @@ Redeemables:
 - `REDEEMABLES_SCAN_INTERVAL_MS`
 - `REDEEM_NOW_MAX`
 - `REDEEMABLES_ADDRESSES` (optional scan list)
-- `POLYGON_RPC_URL` (required for on-chain redeem)
+- `POLYGON_RPC_URL` (single provider)
+- `POLYGON_RPC_URLS` (optional comma-separated failover providers; preferred)
 
 Dashboard includes a `Redeem Now` button and redeem history table.
 
@@ -94,7 +95,7 @@ Dashboard includes a `Redeem Now` button and redeem history table.
 - Dashboard not updating after code changes:
   - another process may already be listening on `8787`
 - Redeem RPC errors:
-  - set a valid `POLYGON_RPC_URL` provider endpoint
+  - set valid `POLYGON_RPC_URLS` (or at least `POLYGON_RPC_URL`) provider endpoint(s)
 
 ## Safety Notes
 

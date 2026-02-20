@@ -27,6 +27,8 @@ type RedeemablesSnapshot = {
     cycles: number;
     redeemedCount: number;
     lastError: string | null;
+    rpcUrls: string[];
+    activeRpcUrl: string | null;
     history: Array<{
         at: number;
         ok: boolean;
@@ -55,6 +57,32 @@ function parseAddressList(raw: string | undefined, fallback: string[]): string[]
     return Array.from(new Set(list));
 }
 
+function parseRpcUrls(): string[] {
+    const listRaw = process.env.POLYGON_RPC_URLS?.trim();
+    const singleRaw = process.env.POLYGON_RPC_URL?.trim();
+    const fromList = listRaw
+        ? listRaw.split(",").map((s) => s.trim()).filter(Boolean)
+        : [];
+    const fromSingle = singleRaw ? [singleRaw] : [];
+    const merged = Array.from(new Set([...fromList, ...fromSingle]));
+    if (merged.length > 0) return merged;
+    return ["https://polygon-rpc.com"];
+}
+
+function isRetryableRpcError(err: unknown): boolean {
+    const e = err as any;
+    const code = String(e?.code ?? "");
+    const msg = String(e?.message ?? e ?? "").toLowerCase();
+    if (code === "NETWORK_ERROR" || code === "SERVER_ERROR" || code === "TIMEOUT") return true;
+    return (
+        msg.includes("no network")
+        || msg.includes("bad response")
+        || msg.includes("timeout")
+        || msg.includes("econnreset")
+        || msg.includes("etimedout")
+    );
+}
+
 async function fetchRedeemableConditions(user: string): Promise<string[]> {
     const res = await fetch(`${DATA_API}/positions?user=${encodeURIComponent(user)}&sizeThreshold=0`);
     if (!res.ok) throw new Error(`positions HTTP ${res.status}`);
@@ -77,10 +105,11 @@ export class RedeemablesManager {
     private readonly addresses: string[];
     private readonly claimAddress: string | null;
     private readonly privateKey: string | null;
-    private readonly rpcUrl: string;
+    private readonly rpcUrls: string[];
     private readonly snapshot: RedeemablesSnapshot;
     private timer: NodeJS.Timeout | null = null;
     private inFlight = false;
+    private rpcIndex = 0;
 
     constructor() {
         const pk = process.env.PRIVATE_KEY?.trim() || null;
@@ -104,7 +133,7 @@ export class RedeemablesManager {
         this.addresses = addressList;
         this.claimAddress = claimAddress;
         this.privateKey = pk;
-        this.rpcUrl = process.env.POLYGON_RPC_URL?.trim() || "https://polygon-rpc.com";
+        this.rpcUrls = parseRpcUrls();
 
         this.snapshot = {
             enabled: this.enabled,
@@ -119,6 +148,8 @@ export class RedeemablesManager {
             cycles: 0,
             redeemedCount: 0,
             lastError: null,
+            rpcUrls: this.rpcUrls,
+            activeRpcUrl: this.rpcUrls[0] ?? null,
             history: [],
         };
     }
@@ -182,25 +213,14 @@ export class RedeemablesManager {
                 return { ok: true, redeemed: 0, reason: "no_redeemables" };
             }
 
-            const provider = new ethers.providers.StaticJsonRpcProvider(
-                { url: this.rpcUrl, timeout: 15000 },
-                { chainId: 137, name: "matic" },
-            );
-            const signer = new Wallet(this.privateKey, provider);
-            const ctf = new ethers.Contract(CTF_ADDRESS, CTF_ABI, signer);
-
             let redeemed = 0;
             let lastTxHash: string | null = null;
             for (const conditionId of cids.slice(0, this.maxRedeemPerClick)) {
-                const tx = await ctf.redeemPositions(
-                    USDC_ADDRESS,
-                    ethers.constants.HashZero,
-                    conditionId,
-                    [1, 2],
-                );
-                await tx.wait(1);
-                redeemed += 1;
-                lastTxHash = tx.hash;
+                const txHash = await this.redeemConditionWithFailover(conditionId);
+                if (txHash) {
+                    redeemed += 1;
+                    lastTxHash = txHash;
+                }
             }
             this.snapshot.redeemedCount += redeemed;
             this.snapshot.lastRedeemAt = Date.now();
@@ -236,5 +256,46 @@ export class RedeemablesManager {
         if (this.snapshot.history.length > 20) {
             this.snapshot.history.length = 20;
         }
+    }
+
+    private async redeemConditionWithFailover(conditionId: string): Promise<string> {
+        let lastErr: unknown = null;
+        const total = this.rpcUrls.length;
+        for (let i = 0; i < total; i += 1) {
+            const idx = (this.rpcIndex + i) % total;
+            const rpcUrl = this.rpcUrls[idx];
+            this.snapshot.activeRpcUrl = rpcUrl;
+            try {
+                const provider = new ethers.providers.StaticJsonRpcProvider(
+                    { url: rpcUrl, timeout: 15000 },
+                    { chainId: 137, name: "matic" },
+                );
+                const signer = new Wallet(this.privateKey!, provider);
+                const ctf = new ethers.Contract(CTF_ADDRESS, CTF_ABI, signer);
+                const tx = await ctf.redeemPositions(
+                    USDC_ADDRESS,
+                    ethers.constants.HashZero,
+                    conditionId,
+                    [1, 2],
+                );
+                await tx.wait(1);
+                this.rpcIndex = idx;
+                this.snapshot.activeRpcUrl = rpcUrl;
+                return tx.hash;
+            } catch (err) {
+                lastErr = err;
+                const retryable = isRetryableRpcError(err);
+                logger.warn(
+                    {
+                        rpcUrl,
+                        retryable,
+                        err: err instanceof Error ? err.message : String(err),
+                    },
+                    "Redeem RPC attempt failed",
+                );
+                if (!retryable) break;
+            }
+        }
+        throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? "redeem_failed"));
     }
 }

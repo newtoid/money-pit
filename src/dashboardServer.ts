@@ -385,6 +385,7 @@ function htmlPage() {
           + ' · redeemed=' + (r.redeemedCount ?? 0);
         document.getElementById('redeemables2').textContent =
           'claim=' + (r.claimAddress || '-')
+          + ' · rpc=' + (r.activeRpcUrl || '-')
           + ' · inFlight=' + (r.inFlight ? 'yes' : 'no')
           + (r.lastRedeemTxHash ? (' · lastTx=' + r.lastRedeemTxHash) : '')
           + (r.lastError ? (' · err=' + r.lastError) : '');
