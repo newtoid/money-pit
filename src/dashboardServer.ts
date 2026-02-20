@@ -1,4 +1,4 @@
-import http from "node:http";
+import * as http from "node:http";
 
 type DashboardServerOpts = {
     port: number;
@@ -9,7 +9,7 @@ type DashboardServerOpts = {
 };
 
 function htmlPage() {
-    return `<!doctype html>
+    return /* language=HTML */ `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
