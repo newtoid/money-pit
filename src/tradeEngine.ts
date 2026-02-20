@@ -162,6 +162,15 @@ function getEnvBool(name: string, fallback: boolean): boolean {
     return fallback;
 }
 
+function isRateLimitError(err: unknown): boolean {
+    const status = Number((err as any)?.response?.status ?? (err as any)?.status ?? 0);
+    if (status === 429) return true;
+    const msg = String((err as any)?.message ?? "");
+    if (msg.includes("429")) return true;
+    const body = String((err as any)?.response?.data ?? "");
+    return body.includes("Error 1015") || body.includes("rate limited");
+}
+
 export class TradeEngine {
     private readonly marketId: string;
     private readonly tokenIds: string[];
@@ -198,6 +207,11 @@ export class TradeEngine {
     private readonly lagStaleMs = Math.max(500, getEnvInt("LAG_STALE_MS", 2500));
     private readonly lagDisableBeforeEndSec = Math.max(0, getEnvInt("LAG_DISABLE_BEFORE_END_SEC", 35));
     private readonly signalK = Math.max(1, getEnvNumber("SIGNAL_K", 60));
+    private readonly forceFlattenEnabled = getEnvBool("FORCE_FLATTEN_ENABLED", true);
+    private readonly forceFlattenBeforeEndSec = Math.max(0, getEnvInt("FORCE_FLATTEN_BEFORE_END_SEC", 40));
+    private readonly forceFlattenAllowLoss = getEnvBool("FORCE_FLATTEN_ALLOW_LOSS", false);
+    private readonly forceFlattenMinIntervalMs = Math.max(500, getEnvInt("FORCE_FLATTEN_MIN_INTERVAL_MS", 3000));
+    private readonly rateLimitCooldownMs = Math.max(1000, getEnvInt("RATE_LIMIT_COOLDOWN_MS", 15000));
 
     private readonly books = new Map<string, TopOfBook>();
     private readonly state: QuoteState = {
@@ -236,6 +250,9 @@ export class TradeEngine {
     private lastAllowanceSyncAttemptAt = 0;
     private lastPositionPollErrorAt = 0;
     private lastCancelAllAt = 0;
+    private lastForceFlattenLogAt = 0;
+    private lastForceFlattenAttemptAt = 0;
+    private rateLimitedUntil = 0;
     private readonly makerAddress: string | null;
     private readonly marketEndUnixSec: number | null;
     private spotMoveBps: number | null = null;
@@ -523,17 +540,54 @@ export class TradeEngine {
             && this.cancelAllBeforeEndSec > 0
             && secondsToEnd <= this.cancelAllBeforeEndSec
         ) {
+            if (
+                this.forceFlattenEnabled
+                && this.forceFlattenBeforeEndSec > 0
+                && this.state.currentYesPosition > 0
+            ) {
+                try {
+                    await this.forceFlattenNearEnd(fairYes, secondsToEnd);
+                } catch (err) {
+                    this.state.orderErrors += 1;
+                    logger.error({ err, marketId: this.marketId, secondsToEnd }, "Force flatten cycle failed");
+                }
+                return;
+            }
             const now = Date.now();
             if (now - this.lastCancelAllAt >= 3000) {
                 this.lastCancelAllAt = now;
-                await this.cancelAllYesOrders();
-                logger.info(
-                    { marketId: this.marketId, secondsToEnd, cancelAllBeforeEndSec: this.cancelAllBeforeEndSec },
-                    "Canceled all orders near market end",
-                );
+                let canceled = false;
+                try {
+                    await this.cancelAllYesOrders();
+                    canceled = true;
+                } catch (err) {
+                    this.state.orderErrors += 1;
+                    logger.error({ err, marketId: this.marketId, secondsToEnd }, "Cancel-all near end failed");
+                }
+                if (canceled) {
+                    logger.info(
+                        { marketId: this.marketId, secondsToEnd, cancelAllBeforeEndSec: this.cancelAllBeforeEndSec },
+                        "Canceled all orders near market end",
+                    );
+                }
             }
             return;
         }
+        if (
+            secondsToEnd !== null
+            && this.forceFlattenEnabled
+            && this.forceFlattenBeforeEndSec > 0
+            && secondsToEnd <= this.forceFlattenBeforeEndSec
+        ) {
+            try {
+                await this.forceFlattenNearEnd(fairYes, secondsToEnd);
+            } catch (err) {
+                this.state.orderErrors += 1;
+                logger.error({ err, marketId: this.marketId, secondsToEnd }, "Force flatten cycle failed");
+            }
+            return;
+        }
+
         if (
             secondsToEnd !== null
             && this.noNewOrdersBeforeEndSec > 0
@@ -557,13 +611,23 @@ export class TradeEngine {
             let sellSize = Math.max(0, Math.min(this.orderSize * lag.sellMult, currentPos));
 
             const profitableExit = this.takeProfitSignal();
+            const bullishTracker = lag.lagMode === "bullish_yes";
+            const risingPriceExit = bullishTracker
+                ? this.priceRiseExitSignal()
+                : { active: false, exitPrice: 0, reason: "not_bullish_tracker" };
+            const exitSignal = risingPriceExit.active ? risingPriceExit : profitableExit;
             let effectiveBid = next.bid;
             let effectiveAsk = next.ask;
             let dustRecoveryShortSell = false;
 
-            if (profitableExit.active) {
+            if (bullishTracker) {
+                // In bullish tracker mode we buy first; only sell when exit signal triggers.
+                sellSize = 0;
+            }
+
+            if (exitSignal.active) {
                 buySize = 0;
-                effectiveAsk = profitableExit.exitPrice;
+                effectiveAsk = exitSignal.exitPrice;
                 // On take-profit, prioritize flattening inventory quickly.
                 sellSize = Math.max(0, currentPos);
                 // Dust recovery: if inventory is positive but below venue min size,
@@ -580,7 +644,7 @@ export class TradeEngine {
             }
 
             // Avoid creating unsellable "dust" below min order size on non-TP exits.
-            if (!this.allowShortSell && !profitableExit.active) {
+            if (!this.allowShortSell && !exitSignal.active && !bullishTracker) {
                 const remainder = Math.max(0, currentPos - sellSize);
                 if (remainder > 0 && remainder < this.minOrderSize && currentPos >= this.minOrderSize) {
                     sellSize = currentPos;
@@ -622,8 +686,8 @@ export class TradeEngine {
                         tradingEnabled: this.tradingEnabled,
                         inventory: this.state.currentYesPosition,
                         takeProfitEnabled: this.takeProfitEnabled,
-                        takeProfitActive: profitableExit.active,
-                        takeProfitReason: profitableExit.reason,
+                        takeProfitActive: exitSignal.active,
+                        takeProfitReason: exitSignal.reason,
                     },
                     this.tradingEnabled ? "DRY_RUN quote decision" : "TRADING_DISABLED quote decision",
                 );
@@ -689,8 +753,10 @@ export class TradeEngine {
                     sellPlaced = true;
                     this.state.sellOrdersPlaced += 1;
                 } else {
-                    if (profitableExit.active && currentPos > 0 && currentPos < this.minOrderSize) {
+                    if (exitSignal.active && currentPos > 0 && currentPos < this.minOrderSize) {
                         sellSkippedReason = "tp_inventory_below_min_order_size";
+                    } else if (bullishTracker && currentPos > 0) {
+                        sellSkippedReason = "waiting_for_price_rise_exit";
                     } else {
                         sellSkippedReason = "insufficient_yes_inventory";
                     }
@@ -727,8 +793,8 @@ export class TradeEngine {
                         buyPlaced,
                         sellPlaced,
                         takeProfitEnabled: this.takeProfitEnabled,
-                        takeProfitActive: profitableExit.active,
-                        takeProfitReason: profitableExit.reason,
+                        takeProfitActive: exitSignal.active,
+                        takeProfitReason: exitSignal.reason,
                         dustRecoveryShortSell,
                         buySkippedReason,
                         sellSkippedReason,
@@ -943,6 +1009,194 @@ export class TradeEngine {
         return { active: true, exitPrice, reason: "triggered" };
     }
 
+    private priceRiseExitSignal(): { active: boolean; exitPrice: number; reason: string } {
+        if (this.state.currentYesPosition <= 0) return { active: false, exitPrice: 0, reason: "no_inventory" };
+        const yes = this.books.get(this.yesTokenId);
+        const bestBid = yes?.bid ?? null;
+        if (bestBid === null || this.avgEntryPriceYes <= 0) return { active: false, exitPrice: 0, reason: "missing_bid_or_entry" };
+        if (bestBid <= this.avgEntryPriceYes) return { active: false, exitPrice: 0, reason: "price_not_risen" };
+        const exitPrice = clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
+        return { active: true, exitPrice, reason: "price_risen_after_bullish_tracker" };
+    }
+
+    private async forceFlattenNearEnd(fairYes: number, secondsToEnd: number) {
+        const now = Date.now();
+        if (now < this.rateLimitedUntil) return;
+        if (now - this.lastForceFlattenAttemptAt < this.forceFlattenMinIntervalMs) return;
+        this.lastForceFlattenAttemptAt = now;
+
+        const currentPos = this.state.currentYesPosition;
+        if (currentPos <= 0) return;
+
+        const yes = this.books.get(this.yesTokenId);
+        const bestBid = yes?.bid ?? null;
+        if (bestBid === null) return;
+
+        const candidateExit = clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
+        const breakEven = this.avgEntryPriceYes > 0 ? this.avgEntryPriceYes : null;
+        if (!this.forceFlattenAllowLoss && breakEven !== null && candidateExit < breakEven) {
+            const now = Date.now();
+            if (now - this.lastForceFlattenLogAt > 3000) {
+                logger.warn(
+                    {
+                        marketId: this.marketId,
+                        yesTokenId: this.yesTokenId,
+                        secondsToEnd,
+                        currentPos,
+                        avgEntryPriceYes: this.avgEntryPriceYes,
+                        bestBid,
+                        candidateExit,
+                    },
+                    "Force flatten skipped: would realize loss (FORCE_FLATTEN_ALLOW_LOSS=false)",
+                );
+                this.lastForceFlattenLogAt = now;
+            }
+            return;
+        }
+
+        let sellSize = currentPos;
+        let dustRecoveryShortSell = false;
+        if (
+            currentPos > 0
+            && currentPos < this.minOrderSize
+            && this.allowShortSell
+            && this.dustRecoveryEnabled
+        ) {
+            sellSize = this.minOrderSize;
+            dustRecoveryShortSell = true;
+        }
+
+        sellSize = this.normalizeOrderSize(sellSize, candidateExit, false);
+        if (sellSize <= 0) return;
+
+        if (this.dryRun || !this.tradingEnabled || !this.clobClient) {
+            logger.info(
+                {
+                    marketId: this.marketId,
+                    yesTokenId: this.yesTokenId,
+                    fairYes,
+                    secondsToEnd,
+                    currentPos,
+                    avgEntryPriceYes: this.avgEntryPriceYes,
+                    exitPrice: candidateExit,
+                    sellSize,
+                    mode: this.tradingEnabled ? "dry_run" : "trading_disabled",
+                    dustRecoveryShortSell,
+                },
+                "Force flatten near market end (simulation)",
+            );
+            return;
+        }
+
+        try {
+            await this.cancelAllYesOrders();
+        } catch (err) {
+            if (isRateLimitError(err)) {
+                this.rateLimitedUntil = Date.now() + this.rateLimitCooldownMs;
+            }
+            logger.warn({ err, marketId: this.marketId }, "Cancel-all before force-flatten SELL failed; continuing with SELL");
+        }
+        try {
+            await this.clobClient.createAndPostOrder(
+                {
+                    tokenID: this.yesTokenId,
+                    side: Side.SELL,
+                    size: sellSize,
+                    price: candidateExit,
+                },
+                { tickSize: String(this.tickSize) as any },
+                OrderType.GTC,
+            );
+        } catch (err) {
+            if (isRateLimitError(err)) {
+                this.rateLimitedUntil = Date.now() + this.rateLimitCooldownMs;
+                logger.warn(
+                    { marketId: this.marketId, yesTokenId: this.yesTokenId, cooldownMs: this.rateLimitCooldownMs },
+                    "Rate limited while posting force-flatten SELL; entering cooldown",
+                );
+                return;
+            }
+            throw err;
+        }
+        this.state.sellOrdersPlaced += 1;
+
+        logger.info(
+            {
+                marketId: this.marketId,
+                yesTokenId: this.yesTokenId,
+                fairYes,
+                secondsToEnd,
+                currentPos,
+                avgEntryPriceYes: this.avgEntryPriceYes,
+                exitPrice: candidateExit,
+                sellSize,
+                forceFlattenAllowLoss: this.forceFlattenAllowLoss,
+                dustRecoveryShortSell,
+            },
+            "Force flatten near market end (posted SELL)",
+        );
+    }
+
+    private forceFlattenStatus() {
+        const now = Date.now();
+        const secondsToEnd = this.secondsToMarketEnd();
+        const inWindow = (
+            this.forceFlattenEnabled
+            && this.forceFlattenBeforeEndSec > 0
+            && secondsToEnd !== null
+            && secondsToEnd <= this.forceFlattenBeforeEndSec
+        );
+        const rateLimited = now < this.rateLimitedUntil;
+        const cooldownRemainingMs = rateLimited ? Math.max(0, this.rateLimitedUntil - now) : 0;
+        const hasInventory = this.state.currentYesPosition > 0;
+        const yes = this.books.get(this.yesTokenId);
+        const bestBid = yes?.bid ?? null;
+        const candidateExit = bestBid === null
+            ? null
+            : clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
+        const blockedByNoLoss = (
+            inWindow
+            && hasInventory
+            && !this.forceFlattenAllowLoss
+            && candidateExit !== null
+            && this.avgEntryPriceYes > 0
+            && candidateExit < this.avgEntryPriceYes
+        );
+        const ready = inWindow && hasInventory && candidateExit !== null && !blockedByNoLoss;
+
+        let reason = "idle";
+        if (!this.forceFlattenEnabled) reason = "disabled";
+        else if (secondsToEnd === null) reason = "market_end_unknown";
+        else if (rateLimited) reason = "rate_limited_cooldown";
+        else if (!inWindow) reason = "outside_force_flatten_window";
+        else if (!hasInventory) reason = "no_inventory";
+        else if (candidateExit === null) reason = "missing_best_bid";
+        else if (blockedByNoLoss) reason = "blocked_by_no_loss_guard";
+        else reason = "ready_to_flatten";
+
+        return {
+            enabled: this.forceFlattenEnabled,
+            allowLoss: this.forceFlattenAllowLoss,
+            beforeEndSec: this.forceFlattenBeforeEndSec,
+            minIntervalMs: this.forceFlattenMinIntervalMs,
+            rateLimitCooldownMs: this.rateLimitCooldownMs,
+            noNewOrdersBeforeEndSec: this.noNewOrdersBeforeEndSec,
+            cancelAllBeforeEndSec: this.cancelAllBeforeEndSec,
+            secondsToEnd,
+            inWindow,
+            rateLimited,
+            cooldownRemainingMs,
+            hasInventory,
+            inventory: this.state.currentYesPosition,
+            avgEntryPriceYes: this.avgEntryPriceYes > 0 ? Number(this.avgEntryPriceYes.toFixed(6)) : 0,
+            bestBid,
+            candidateExit,
+            blockedByNoLoss,
+            ready,
+            reason,
+        };
+    }
+
     private secondsToMarketEnd(): number | null {
         if (!this.marketEndUnixSec || !Number.isFinite(this.marketEndUnixSec)) return null;
         return Math.floor(this.marketEndUnixSec - Date.now() / 1000);
@@ -950,8 +1204,31 @@ export class TradeEngine {
 
     private async cancelAllYesOrders() {
         if (!this.clobClient) return;
-        const open = await this.clobClient.getOpenOrders({ asset_id: this.yesTokenId });
-        const orderIds = Array.isArray(open) ? open.map((o: any) => String(o.id)).filter(Boolean) : [];
+        let open: unknown;
+        try {
+            open = await this.clobClient.getOpenOrders({ asset_id: this.yesTokenId });
+        } catch (err) {
+            if (isRateLimitError(err)) {
+                this.rateLimitedUntil = Date.now() + this.rateLimitCooldownMs;
+                logger.warn(
+                    { marketId: this.marketId, yesTokenId: this.yesTokenId, cooldownMs: this.rateLimitCooldownMs },
+                    "Rate limited on getOpenOrders; entering cooldown",
+                );
+                return;
+            }
+            logger.warn(
+                { err, marketId: this.marketId, yesTokenId: this.yesTokenId },
+                "getOpenOrders failed; skipping cancel-all for this cycle",
+            );
+            return;
+        }
+
+        const rows =
+            Array.isArray(open) ? open
+                : Array.isArray((open as any)?.data) ? (open as any).data
+                    : Array.isArray((open as any)?.orders) ? (open as any).orders
+                        : [];
+        const orderIds = rows.map((o: any) => String(o?.id ?? o?.orderID ?? o?.order_id ?? "")).filter(Boolean);
         if (orderIds.length > 0) {
             await this.clobClient.cancelOrders(orderIds);
         }
@@ -1013,6 +1290,7 @@ export class TradeEngine {
                 maxSkew: this.lagMaxSkew,
                 sizeMult: this.lagSizeMult,
             },
+            forceFlatten: this.forceFlattenStatus(),
         };
     }
 }

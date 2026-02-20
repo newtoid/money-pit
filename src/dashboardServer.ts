@@ -92,7 +92,7 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Process</div><div id="process" class="v"></div><div id="uptime" class="small"></div></div>
       <div class="card span-3"><div class="k">Market</div><div id="market" class="v"></div><div id="window" class="small"></div></div>
       <div class="card span-3"><div class="k">Connections</div><div id="conns" class="v"></div><div id="wsdetail" class="small"></div></div>
-      <div class="card span-3"><div class="k">Signal</div><div id="signal" class="v"></div><div id="signal2" class="small"></div><div id="lagBadge" class="small"></div></div>
+      <div class="card span-3"><div class="k">Signal</div><div id="signal" class="v"></div><div id="signal2" class="small"></div><div id="lagBadge" class="small"></div><div id="flattenBadge" class="small"></div></div>
       <div class="card span-3"><div class="k">Dust Sweeper</div><div id="dust" class="v"></div><div id="dust2" class="small"></div></div>
       <div class="card span-3"><div class="k">Redeemables</div><div id="redeemables" class="v"></div><div id="redeemables2" class="small"></div><button id="redeemNowBtn" style="margin-top:8px;padding:6px 10px;border:1px solid #334155;background:#0f172a;color:#e5edf8;border-radius:6px;cursor:pointer;">Redeem Now</button></div>
 
@@ -141,9 +141,10 @@ function htmlPage() {
         </div>
       </div>
 
-      <div class="card span-4"><div class="k">Quote</div><div id="quote" class="v"></div><div id="quote2" class="small"></div></div>
-      <div class="card span-4"><div class="k">Execution</div><div id="exec" class="v"></div><div id="exec2" class="small"></div></div>
-      <div class="card span-4"><div class="k">Inventory</div><div id="inventory" class="v"></div><div id="pnl" class="small"></div></div>
+      <div class="card span-3"><div class="k">Quote</div><div id="quote" class="v"></div><div id="quote2" class="small"></div></div>
+      <div class="card span-3"><div class="k">Execution</div><div id="exec" class="v"></div><div id="exec2" class="small"></div></div>
+      <div class="card span-3"><div class="k">Force Flatten</div><div id="flatten" class="v"></div><div id="flatten2" class="small"></div></div>
+      <div class="card span-3"><div class="k">Portfolio</div><div id="portfolio" class="v"></div><div id="portfolio2" class="small"></div></div>
 
       <div class="card span-12"><div class="k">Recent Events</div><pre id="events"></pre></div>
       <div class="card span-12">
@@ -156,18 +157,44 @@ function htmlPage() {
     </div>
   </div>
   <script>
-    const HISTORY_MAX = 240;
+    const HISTORY_MAX = 3600;
     const hist = [];
 
     function cls(ok) { return ok ? "ok" : "bad"; }
     function fmtTs(ts){ return ts ? new Date(ts).toLocaleTimeString() : "-"; }
     function num(v, d=4){ return (v === null || v === undefined || Number.isNaN(Number(v))) ? "-" : Number(v).toFixed(d); }
+    function usd(v){ return (v === null || v === undefined || Number.isNaN(Number(v))) ? "-" : ("$" + Number(v).toFixed(2)); }
+    function dlt(v){ if (v === null || v === undefined || Number.isNaN(Number(v))) return "-"; return (v >= 0 ? "+" : "") + "$" + Number(v).toFixed(2); }
+    function rollingDeltaSec(key, seconds){
+      if (hist.length < 2) return null;
+      const latest = hist[hist.length - 1];
+      const latestV = latest[key];
+      if (latestV === null || latestV === undefined || !Number.isFinite(latestV)) return null;
+      const target = latest.t - (seconds * 1000);
+      let base = null;
+      for (let i = hist.length - 1; i >= 0; i--) {
+        if (hist[i].t <= target) { base = hist[i]; break; }
+      }
+      if (!base) base = hist[0];
+      const baseV = base[key];
+      if (baseV === null || baseV === undefined || !Number.isFinite(baseV)) return null;
+      return latestV - baseV;
+    }
 
     function pushPoint(s){
       const engine = s.engine || {};
       const q = engine.lastQuote || {};
       const pnl = engine.pnl || {};
       const signal = s.signal || {};
+      const collateral = engine.collateral || {};
+      const cashRaw = Number(collateral.balanceRaw);
+      const cashUsdc = Number.isFinite(cashRaw) ? (cashRaw / 1_000_000) : null;
+      const invShares = Number(engine.currentYesPosition);
+      const fairYes = (q.fairYes ?? signal.polymarketFairYes ?? null);
+      const inventoryUsdc = (Number.isFinite(invShares) && Number.isFinite(Number(fairYes)))
+        ? (invShares * Number(fairYes))
+        : null;
+      const equityUsdc = (cashUsdc !== null && inventoryUsdc !== null) ? (cashUsdc + inventoryUsdc) : null;
       hist.push({
         t: Date.now(),
         fair: q.fairYes ?? null,
@@ -182,6 +209,9 @@ function htmlPage() {
         spot: signal.spotPrice ?? null,
         inv: engine.currentYesPosition ?? null,
         net: pnl.netYes ?? null,
+        cashUsdc,
+        inventoryUsdc,
+        equityUsdc,
       });
       if (hist.length > HISTORY_MAX) hist.shift();
     }
@@ -326,6 +356,7 @@ function htmlPage() {
         const ctr = e.counters || {};
         const sig = s.signal || {};
         const lagArb = (e && e.lagArb) ? e.lagArb : {};
+        const ff = (e && e.forceFlatten) ? e.forceFlatten : {};
 
         pushPoint(s);
         renderCharts();
@@ -362,6 +393,21 @@ function htmlPage() {
           '<span class="badge ' + regimeClass + '">' + regimeLabel + '</span>'
           + ' · lag ' + num(lagVal, 1) + ' bps'
           + ' · enter/exit ' + num(lagArb.enterBps, 1) + '/' + num(lagArb.exitBps, 1);
+
+        const ffReady = !!ff.ready;
+        const ffBlocked = !!ff.blockedByNoLoss;
+        const ffEnabled = !!ff.enabled;
+        const ffInWindow = !!ff.inWindow;
+        const ffRateLimited = !!ff.rateLimited;
+        const ffClass = ffReady ? 'ok' : ((ffBlocked || ffRateLimited) ? 'warn' : (ffEnabled ? 'warn' : 'bad'));
+        const ffLabel = ffReady
+          ? 'FLATTEN: EXIT ACTIVE'
+          : (ffRateLimited ? 'FLATTEN: RATE LIMITED'
+            : (ffBlocked ? 'FLATTEN: BLOCKED (NO-LOSS)' : (ffInWindow ? 'FLATTEN: WAITING' : (ffEnabled ? 'FLATTEN: IDLE' : 'FLATTEN: DISABLED'))));
+        document.getElementById('flattenBadge').innerHTML =
+          '<span class="badge ' + ffClass + '">' + ffLabel + '</span>'
+          + ' · tte ' + num(ff.secondsToEnd, 0) + 's'
+          + (ffRateLimited ? (' · retry ' + num((ff.cooldownRemainingMs ?? 0) / 1000, 1) + 's') : '');
 
         const d = s.dustSweeper || {};
         document.getElementById('dust').textContent =
@@ -418,13 +464,39 @@ function htmlPage() {
           + ' · skippedCollateral=' + (ctr.skippedInsufficientCollateral ?? 0)
           + ' · allowance=' + ((e.collateral && e.collateral.allowanceRaw) ? e.collateral.allowanceRaw : '-');
 
-        document.getElementById('inventory').textContent =
-          'yes=' + (e.currentYesPosition ?? 0) + ' @avg ' + num(pnl.avgEntryPriceYes, 4);
-        document.getElementById('pnl').textContent =
-          'realized=' + num(pnl.realizedYes, 4)
-          + ' · unrealized=' + num(pnl.unrealizedYes, 4)
-          + ' · net=' + num(pnl.netYes, 4)
-          + ' · lastFill=' + (pnl.lastFill ? JSON.stringify(pnl.lastFill) : '-');
+        
+        document.getElementById('flatten').innerHTML =
+          '<span class="badge ' + ffClass + '">' + ffLabel + '</span>'
+          + ' · tte=' + num(ff.secondsToEnd, 0) + 's'
+          + ' · inv=' + num(ff.inventory, 2);
+        document.getElementById('flatten2').textContent =
+          'reason=' + (ff.reason || '-')
+          + ' · allowLoss=' + (ff.allowLoss ? 'yes' : 'no')
+          + ' · exit@' + num(ff.candidateExit, 4)
+          + ' vs avg@' + num(ff.avgEntryPriceYes, 4)
+          + ' · window<= ' + num(ff.beforeEndSec, 0) + 's'
+          + ' · cooldown=' + num((ff.cooldownRemainingMs ?? 0) / 1000, 1) + 's';
+
+        const cashRaw = Number((e.collateral && e.collateral.balanceRaw) ? e.collateral.balanceRaw : NaN);
+        const cashUsdc = Number.isFinite(cashRaw) ? (cashRaw / 1_000_000) : null;
+        const invShares = Number(e.currentYesPosition ?? NaN);
+        const fairYes = Number(q?.fairYes ?? sig.polymarketFairYes ?? NaN);
+        const invUsdc = (Number.isFinite(invShares) && Number.isFinite(fairYes)) ? (invShares * fairYes) : null;
+        const equityUsdc = (cashUsdc !== null && invUsdc !== null) ? (cashUsdc + invUsdc) : null;
+        const p1m = rollingDeltaSec('equityUsdc', 60);
+        const p5m = rollingDeltaSec('equityUsdc', 300);
+        const p15m = rollingDeltaSec('equityUsdc', 900);
+
+        document.getElementById('portfolio').textContent =
+          'equity(est)=' + usd(equityUsdc)
+          + ' · cash=' + usd(cashUsdc)
+          + ' · inv(est)=' + usd(invUsdc);
+        document.getElementById('portfolio2').textContent =
+          'rolling P/L: 1m ' + dlt(p1m)
+          + ' · 5m ' + dlt(p5m)
+          + ' · 15m ' + dlt(p15m)
+          + ' · pos=' + num(e.currentYesPosition, 2)
+          + ' @fair ' + num((Number.isFinite(fairYes) ? fairYes : null), 4);
 
         document.getElementById('events').textContent =
           (s.events || []).map(e => '[' + fmtTs(e.at) + '] ' + e.type + ' ' + (e.msg || '')).join('\\n');
