@@ -62,6 +62,20 @@ function htmlPage() {
     .v { margin-top:6px; font-size:16px; word-break:break-word; }
     .small { margin-top:4px; color:var(--muted); font-size:12px; }
     .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+    .badge {
+      display:inline-block;
+      padding:2px 8px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:600;
+      letter-spacing:.02em;
+      border:1px solid #334155;
+      background:#0b1220;
+      color:var(--muted);
+    }
+    .badge.ok { border-color:#14532d; background:#052e1e; color:#86efac; }
+    .badge.bad { border-color:#7f1d1d; background:#3f0d0d; color:#fca5a5; }
+    .badge.warn { border-color:#78350f; background:#3f1f0a; color:#fcd34d; }
     .chart { width:100%; height:180px; display:block; margin-top:6px; border-radius:8px; background:#0b1220; border:1px solid #1f2a44; }
     .legend { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; color:var(--muted); font-size:11px; }
     .dot { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:4px; vertical-align:middle; }
@@ -78,7 +92,7 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Process</div><div id="process" class="v"></div><div id="uptime" class="small"></div></div>
       <div class="card span-3"><div class="k">Market</div><div id="market" class="v"></div><div id="window" class="small"></div></div>
       <div class="card span-3"><div class="k">Connections</div><div id="conns" class="v"></div><div id="wsdetail" class="small"></div></div>
-      <div class="card span-3"><div class="k">Signal</div><div id="signal" class="v"></div><div id="signal2" class="small"></div></div>
+      <div class="card span-3"><div class="k">Signal</div><div id="signal" class="v"></div><div id="signal2" class="small"></div><div id="lagBadge" class="small"></div></div>
       <div class="card span-3"><div class="k">Dust Sweeper</div><div id="dust" class="v"></div><div id="dust2" class="small"></div></div>
       <div class="card span-3"><div class="k">Redeemables</div><div id="redeemables" class="v"></div><div id="redeemables2" class="small"></div><button id="redeemNowBtn" style="margin-top:8px;padding:6px 10px;border:1px solid #334155;background:#0f172a;color:#e5edf8;border-radius:6px;cursor:pointer;">Redeem Now</button></div>
 
@@ -311,6 +325,7 @@ function htmlPage() {
         const pnl = e.pnl || {};
         const ctr = e.counters || {};
         const sig = s.signal || {};
+        const lagArb = (e && e.lagArb) ? e.lagArb : {};
 
         pushPoint(s);
         renderCharts();
@@ -339,6 +354,14 @@ function htmlPage() {
           + ' · polyMove=' + num(sig.polymarketImpliedMoveBps, 1) + ' bps'
           + ' · lag=' + num(sig.lagBps, 1) + ' bps'
           + ' · connected=' + (sig.spotConnected ? 'yes' : 'no');
+        const regime = Number(lagArb.regime ?? 0);
+        const lagVal = sig.lagBps;
+        const regimeLabel = regime > 0 ? 'BULLISH YES' : (regime < 0 ? 'BEARISH YES' : 'NEUTRAL');
+        const regimeClass = regime > 0 ? 'ok' : (regime < 0 ? 'bad' : 'warn');
+        document.getElementById('lagBadge').innerHTML =
+          '<span class="badge ' + regimeClass + '">' + regimeLabel + '</span>'
+          + ' · lag ' + num(lagVal, 1) + ' bps'
+          + ' · enter/exit ' + num(lagArb.enterBps, 1) + '/' + num(lagArb.exitBps, 1);
 
         const d = s.dustSweeper || {};
         document.getElementById('dust').textContent =
