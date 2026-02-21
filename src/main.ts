@@ -175,6 +175,7 @@ async function main() {
         const engine = new TradeEngine({
             marketId: target.marketId,
             tokenIds: target.tokenIds,
+            marketStartUnixSec: target.marketStartUnixSec,
             marketEndUnixSec: target.marketEndUnixSec,
             clobClient,
             dryRun: env.DRY_RUN,

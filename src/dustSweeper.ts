@@ -32,6 +32,15 @@ type DustSweeperSnapshot = {
     lastError: string | null;
     lastAction: string | null;
     makerAddress: string | null;
+    skipReasons: Record<string, number>;
+    recentSkips: Array<{
+        at: number;
+        tokenId: string;
+        address: string;
+        reason: string;
+        size: number;
+        bid: number | null;
+    }>;
 };
 
 function toNum(v: unknown): number {
@@ -130,6 +139,8 @@ export class DustSweeper {
             lastError: null,
             lastAction: null,
             makerAddress: this.makerAddress,
+            skipReasons: {},
+            recentSkips: [],
         };
     }
 
@@ -162,6 +173,25 @@ export class DustSweeper {
 
     getSnapshot(): DustSweeperSnapshot {
         return { ...this.snapshot, inFlight: this.inFlight };
+    }
+
+    private recordSkip(reason: string, ctx: {
+        tokenId: string;
+        address: string;
+        size: number;
+        bid?: number | null;
+    }) {
+        this.snapshot.skipped += 1;
+        this.snapshot.skipReasons[reason] = (this.snapshot.skipReasons[reason] ?? 0) + 1;
+        this.snapshot.recentSkips.unshift({
+            at: Date.now(),
+            tokenId: ctx.tokenId,
+            address: ctx.address,
+            reason,
+            size: ctx.size,
+            bid: ctx.bid ?? null,
+        });
+        if (this.snapshot.recentSkips.length > 12) this.snapshot.recentSkips.length = 12;
     }
 
     private async runCycle() {
@@ -201,13 +231,22 @@ export class DustSweeper {
                     } else if (this.allowShort) {
                         targetSellSize = this.minOrderSize;
                     } else {
-                        this.snapshot.skipped += 1;
+                        this.recordSkip("size_below_min_and_short_disabled", {
+                            tokenId,
+                            address,
+                            size,
+                        });
                         continue;
                     }
 
                     const bid = await getBestBid(tokenId);
                     if (bid === null || bid < this.minBid) {
-                        this.snapshot.skipped += 1;
+                        this.recordSkip("bid_below_min_or_missing", {
+                            tokenId,
+                            address,
+                            size,
+                            bid,
+                        });
                         continue;
                     }
                     const estNotional = targetSellSize * bid;
@@ -215,11 +254,22 @@ export class DustSweeper {
                     this.snapshot.discoveredDustNotionalUsdc += estNotional;
                     if (this.makerAddress && address.toLowerCase() !== this.makerAddress.toLowerCase()) {
                         this.snapshot.externalDustNotionalUsdc += estNotional;
+                        this.recordSkip("external_address_discovery_only", {
+                            tokenId,
+                            address,
+                            size,
+                            bid,
+                        });
                         continue; // can discover, but cannot trade dust on other addresses with this signer
                     }
 
                     if (notionalUsed + estNotional > this.maxCycleNotional) {
-                        this.snapshot.skipped += 1;
+                        this.recordSkip("cycle_notional_cap", {
+                            tokenId,
+                            address,
+                            size,
+                            bid,
+                        });
                         continue;
                     }
 
@@ -241,7 +291,12 @@ export class DustSweeper {
                         );
                     } catch (err) {
                         this.snapshot.attempted += 1;
-                        this.snapshot.skipped += 1;
+                        this.recordSkip("order_post_failed", {
+                            tokenId,
+                            address,
+                            size,
+                            bid,
+                        });
                         logger.warn(
                             { address, tokenId, size, targetSellSize, bid, err: err instanceof Error ? err.message : String(err) },
                             "Dust sweep sell failed",

@@ -93,7 +93,7 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Market</div><div id="market" class="v"></div><div id="window" class="small"></div></div>
       <div class="card span-3"><div class="k">Connections</div><div id="conns" class="v"></div><div id="wsdetail" class="small"></div></div>
       <div class="card span-3"><div class="k">Signal</div><div id="signal" class="v"></div><div id="signal2" class="small"></div><div id="lagBadge" class="small"></div><div id="flattenBadge" class="small"></div></div>
-      <div class="card span-3"><div class="k">Dust Sweeper</div><div id="dust" class="v"></div><div id="dust2" class="small"></div></div>
+      <div class="card span-3"><div class="k">Dust Sweeper</div><div id="dust" class="v"></div><div id="dust2" class="small"></div><div id="dust3" class="small"></div><div id="dust4" class="small"></div></div>
       <div class="card span-3"><div class="k">Redeemables</div><div id="redeemables" class="v"></div><div id="redeemables2" class="small"></div><button id="redeemNowBtn" style="margin-top:8px;padding:6px 10px;border:1px solid #334155;background:#0f172a;color:#e5edf8;border-radius:6px;cursor:pointer;">Redeem Now</button></div>
 
       <div class="card span-6">
@@ -165,6 +165,16 @@ function htmlPage() {
     function num(v, d=4){ return (v === null || v === undefined || Number.isNaN(Number(v))) ? "-" : Number(v).toFixed(d); }
     function usd(v){ return (v === null || v === undefined || Number.isNaN(Number(v))) ? "-" : ("$" + Number(v).toFixed(2)); }
     function dlt(v){ if (v === null || v === undefined || Number.isNaN(Number(v))) return "-"; return (v >= 0 ? "+" : "") + "$" + Number(v).toFixed(2); }
+    function dustReasonLabel(key){
+      const map = {
+        size_below_min_and_short_disabled: 'Too small and short-sell is off',
+        bid_below_min_or_missing: 'No usable bid price',
+        external_address_discovery_only: 'Found on another wallet (discovery only)',
+        cycle_notional_cap: 'Hit per-cycle dollar cap',
+        order_post_failed: 'Order submit failed',
+      };
+      return map[key] || key;
+    }
     function rollingDeltaSec(key, seconds){
       if (hist.length < 2) return null;
       const latest = hist[hist.length - 1];
@@ -398,16 +408,13 @@ function htmlPage() {
         const ffBlocked = !!ff.blockedByNoLoss;
         const ffEnabled = !!ff.enabled;
         const ffInWindow = !!ff.inWindow;
-        const ffRateLimited = !!ff.rateLimited;
-        const ffClass = ffReady ? 'ok' : ((ffBlocked || ffRateLimited) ? 'warn' : (ffEnabled ? 'warn' : 'bad'));
+        const ffClass = ffReady ? 'ok' : (ffBlocked ? 'warn' : (ffEnabled ? 'warn' : 'bad'));
         const ffLabel = ffReady
           ? 'FLATTEN: EXIT ACTIVE'
-          : (ffRateLimited ? 'FLATTEN: RATE LIMITED'
-            : (ffBlocked ? 'FLATTEN: BLOCKED (NO-LOSS)' : (ffInWindow ? 'FLATTEN: WAITING' : (ffEnabled ? 'FLATTEN: IDLE' : 'FLATTEN: DISABLED'))));
+          : (ffBlocked ? 'FLATTEN: BLOCKED (NO-LOSS)' : (ffInWindow ? 'FLATTEN: WAITING' : (ffEnabled ? 'FLATTEN: IDLE' : 'FLATTEN: DISABLED')));
         document.getElementById('flattenBadge').innerHTML =
           '<span class="badge ' + ffClass + '">' + ffLabel + '</span>'
-          + ' · tte ' + num(ff.secondsToEnd, 0) + 's'
-          + (ffRateLimited ? (' · retry ' + num((ff.cooldownRemainingMs ?? 0) / 1000, 1) + 's') : '');
+          + ' · tte ' + num(ff.secondsToEnd, 0) + 's';
 
         const d = s.dustSweeper || {};
         document.getElementById('dust').textContent =
@@ -423,6 +430,22 @@ function htmlPage() {
           + ' external=$' + num(d.externalDustNotionalUsdc, 3)
           + (d.lastAction ? (' · last=' + d.lastAction) : '')
           + (d.lastError ? (' · err=' + d.lastError) : '');
+        const skipReasons = (d.skipReasons && typeof d.skipReasons === 'object') ? d.skipReasons : {};
+        const topSkipRows = Object.entries(skipReasons)
+          .sort((a, b) => Number(b[1]) - Number(a[1]))
+          .slice(0, 3);
+        const topSkip = topSkipRows.map(([k, v]) => (k + ':' + v)).join(' · ');
+        const topSkipPretty = topSkipRows.map(([k, v]) => (dustReasonLabel(k) + ' (' + v + ')')).join(' · ');
+        const recentSkips = Array.isArray(d.recentSkips) ? d.recentSkips.slice(0, 2) : [];
+        const recentSkipText = recentSkips.map(x => {
+          const token = String(x.tokenId || '').slice(0, 6);
+          return (dustReasonLabel(String(x.reason || '-')) + '@' + token);
+        }).join(' · ');
+        document.getElementById('dust3').textContent =
+          'skip reasons: ' + (topSkip || '-')
+          + (recentSkipText ? (' · recent: ' + recentSkipText) : '');
+        document.getElementById('dust4').textContent =
+          'plain English: ' + (topSkipPretty || '-');
 
         const r = s.redeemables || {};
         document.getElementById('redeemables').textContent =
@@ -474,8 +497,7 @@ function htmlPage() {
           + ' · allowLoss=' + (ff.allowLoss ? 'yes' : 'no')
           + ' · exit@' + num(ff.candidateExit, 4)
           + ' vs avg@' + num(ff.avgEntryPriceYes, 4)
-          + ' · window<= ' + num(ff.beforeEndSec, 0) + 's'
-          + ' · cooldown=' + num((ff.cooldownRemainingMs ?? 0) / 1000, 1) + 's';
+          + ' · window<= ' + num(ff.beforeEndSec, 0) + 's';
 
         const cashRaw = Number((e.collateral && e.collateral.balanceRaw) ? e.collateral.balanceRaw : NaN);
         const cashUsdc = Number.isFinite(cashRaw) ? (cashRaw / 1_000_000) : null;

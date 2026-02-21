@@ -30,6 +30,7 @@ type QuoteState = {
 type EngineOpts = {
     marketId: string;
     tokenIds: string[];
+    marketStartUnixSec?: number | null;
     marketEndUnixSec?: number | null;
     clobClient: ClobClient | null;
     dryRun: boolean;
@@ -162,15 +163,6 @@ function getEnvBool(name: string, fallback: boolean): boolean {
     return fallback;
 }
 
-function isRateLimitError(err: unknown): boolean {
-    const status = Number((err as any)?.response?.status ?? (err as any)?.status ?? 0);
-    if (status === 429) return true;
-    const msg = String((err as any)?.message ?? "");
-    if (msg.includes("429")) return true;
-    const body = String((err as any)?.response?.data ?? "");
-    return body.includes("Error 1015") || body.includes("rate limited");
-}
-
 export class TradeEngine {
     private readonly marketId: string;
     private readonly tokenIds: string[];
@@ -207,11 +199,10 @@ export class TradeEngine {
     private readonly lagStaleMs = Math.max(500, getEnvInt("LAG_STALE_MS", 2500));
     private readonly lagDisableBeforeEndSec = Math.max(0, getEnvInt("LAG_DISABLE_BEFORE_END_SEC", 35));
     private readonly signalK = Math.max(1, getEnvNumber("SIGNAL_K", 60));
+    private readonly clobLedgerMinIntervalMs = Math.max(0, getEnvInt("CLOB_LEDGER_MIN_INTERVAL_MS", 100));
     private readonly forceFlattenEnabled = getEnvBool("FORCE_FLATTEN_ENABLED", true);
     private readonly forceFlattenBeforeEndSec = Math.max(0, getEnvInt("FORCE_FLATTEN_BEFORE_END_SEC", 40));
     private readonly forceFlattenAllowLoss = getEnvBool("FORCE_FLATTEN_ALLOW_LOSS", false);
-    private readonly forceFlattenMinIntervalMs = Math.max(500, getEnvInt("FORCE_FLATTEN_MIN_INTERVAL_MS", 3000));
-    private readonly rateLimitCooldownMs = Math.max(1000, getEnvInt("RATE_LIMIT_COOLDOWN_MS", 15000));
 
     private readonly books = new Map<string, TopOfBook>();
     private readonly state: QuoteState = {
@@ -250,10 +241,10 @@ export class TradeEngine {
     private lastAllowanceSyncAttemptAt = 0;
     private lastPositionPollErrorAt = 0;
     private lastCancelAllAt = 0;
+    private lastOpenOrdersFetchAt = 0;
     private lastForceFlattenLogAt = 0;
-    private lastForceFlattenAttemptAt = 0;
-    private rateLimitedUntil = 0;
     private readonly makerAddress: string | null;
+    private readonly marketStartUnixSec: number | null;
     private readonly marketEndUnixSec: number | null;
     private spotMoveBps: number | null = null;
     private spotUpdatedAt: number | null = null;
@@ -268,6 +259,7 @@ export class TradeEngine {
         this.clobClient = opts.clobClient;
         this.dryRun = opts.dryRun;
         this.tradingEnabled = opts.tradingEnabled;
+        this.marketStartUnixSec = opts.marketStartUnixSec ?? null;
         this.marketEndUnixSec = opts.marketEndUnixSec ?? null;
         this.makerAddress = this.resolveMakerAddress();
     }
@@ -534,6 +526,11 @@ export class TradeEngine {
         if (fairYes === null) return;
         this.state.quoteCycles += 1;
 
+        const secondsSinceStart = this.secondsSinceMarketStart();
+        if (secondsSinceStart === null || secondsSinceStart < 0 || secondsSinceStart > 60) {
+            return;
+        }
+
         const secondsToEnd = this.secondsToMarketEnd();
         if (
             secondsToEnd !== null
@@ -598,7 +595,8 @@ export class TradeEngine {
 
         const lag = this.computeLagDecision(fairYes, secondsToEnd);
         const next = this.quoteFromFair(fairYes, lag.lagSkew);
-        if (!this.shouldRequote(next.bid, next.ask)) return;
+        const immediateExit = this.priceRiseExitSignal().active || this.takeProfitSignal().active;
+        if (!immediateExit && !this.shouldRequote(next.bid, next.ask)) return;
 
         this.inFlight = true;
         try {
@@ -612,18 +610,19 @@ export class TradeEngine {
 
             const profitableExit = this.takeProfitSignal();
             const bullishTracker = lag.lagMode === "bullish_yes";
-            const risingPriceExit = bullishTracker
-                ? this.priceRiseExitSignal()
-                : { active: false, exitPrice: 0, reason: "not_bullish_tracker" };
+            const risingPriceExit = this.priceRiseExitSignal();
             const exitSignal = risingPriceExit.active ? risingPriceExit : profitableExit;
             let effectiveBid = next.bid;
             let effectiveAsk = next.ask;
             let dustRecoveryShortSell = false;
 
-            if (bullishTracker) {
-                // In bullish tracker mode we buy first; only sell when exit signal triggers.
-                sellSize = 0;
+            if (!bullishTracker) {
+                // Directional mode: only buy when BTC tracker leads Polymarket.
+                buySize = 0;
             }
+
+            // Directional mode: do not place passive sells while waiting for price-rise exit.
+            sellSize = 0;
 
             if (exitSignal.active) {
                 buySize = 0;
@@ -640,14 +639,6 @@ export class TradeEngine {
                 ) {
                     sellSize = this.minOrderSize;
                     dustRecoveryShortSell = true;
-                }
-            }
-
-            // Avoid creating unsellable "dust" below min order size on non-TP exits.
-            if (!this.allowShortSell && !exitSignal.active && !bullishTracker) {
-                const remainder = Math.max(0, currentPos - sellSize);
-                if (remainder > 0 && remainder < this.minOrderSize && currentPos >= this.minOrderSize) {
-                    sellSize = currentPos;
                 }
             }
 
@@ -755,7 +746,7 @@ export class TradeEngine {
                 } else {
                     if (exitSignal.active && currentPos > 0 && currentPos < this.minOrderSize) {
                         sellSkippedReason = "tp_inventory_below_min_order_size";
-                    } else if (bullishTracker && currentPos > 0) {
+                    } else if (currentPos > 0) {
                         sellSkippedReason = "waiting_for_price_rise_exit";
                     } else {
                         sellSkippedReason = "insufficient_yes_inventory";
@@ -1020,11 +1011,6 @@ export class TradeEngine {
     }
 
     private async forceFlattenNearEnd(fairYes: number, secondsToEnd: number) {
-        const now = Date.now();
-        if (now < this.rateLimitedUntil) return;
-        if (now - this.lastForceFlattenAttemptAt < this.forceFlattenMinIntervalMs) return;
-        this.lastForceFlattenAttemptAt = now;
-
         const currentPos = this.state.currentYesPosition;
         if (currentPos <= 0) return;
 
@@ -1091,33 +1077,18 @@ export class TradeEngine {
         try {
             await this.cancelAllYesOrders();
         } catch (err) {
-            if (isRateLimitError(err)) {
-                this.rateLimitedUntil = Date.now() + this.rateLimitCooldownMs;
-            }
             logger.warn({ err, marketId: this.marketId }, "Cancel-all before force-flatten SELL failed; continuing with SELL");
         }
-        try {
-            await this.clobClient.createAndPostOrder(
-                {
-                    tokenID: this.yesTokenId,
-                    side: Side.SELL,
-                    size: sellSize,
-                    price: candidateExit,
-                },
-                { tickSize: String(this.tickSize) as any },
-                OrderType.GTC,
-            );
-        } catch (err) {
-            if (isRateLimitError(err)) {
-                this.rateLimitedUntil = Date.now() + this.rateLimitCooldownMs;
-                logger.warn(
-                    { marketId: this.marketId, yesTokenId: this.yesTokenId, cooldownMs: this.rateLimitCooldownMs },
-                    "Rate limited while posting force-flatten SELL; entering cooldown",
-                );
-                return;
-            }
-            throw err;
-        }
+        await this.clobClient.createAndPostOrder(
+            {
+                tokenID: this.yesTokenId,
+                side: Side.SELL,
+                size: sellSize,
+                price: candidateExit,
+            },
+            { tickSize: String(this.tickSize) as any },
+            OrderType.GTC,
+        );
         this.state.sellOrdersPlaced += 1;
 
         logger.info(
@@ -1138,7 +1109,6 @@ export class TradeEngine {
     }
 
     private forceFlattenStatus() {
-        const now = Date.now();
         const secondsToEnd = this.secondsToMarketEnd();
         const inWindow = (
             this.forceFlattenEnabled
@@ -1146,8 +1116,6 @@ export class TradeEngine {
             && secondsToEnd !== null
             && secondsToEnd <= this.forceFlattenBeforeEndSec
         );
-        const rateLimited = now < this.rateLimitedUntil;
-        const cooldownRemainingMs = rateLimited ? Math.max(0, this.rateLimitedUntil - now) : 0;
         const hasInventory = this.state.currentYesPosition > 0;
         const yes = this.books.get(this.yesTokenId);
         const bestBid = yes?.bid ?? null;
@@ -1167,7 +1135,6 @@ export class TradeEngine {
         let reason = "idle";
         if (!this.forceFlattenEnabled) reason = "disabled";
         else if (secondsToEnd === null) reason = "market_end_unknown";
-        else if (rateLimited) reason = "rate_limited_cooldown";
         else if (!inWindow) reason = "outside_force_flatten_window";
         else if (!hasInventory) reason = "no_inventory";
         else if (candidateExit === null) reason = "missing_best_bid";
@@ -1178,14 +1145,10 @@ export class TradeEngine {
             enabled: this.forceFlattenEnabled,
             allowLoss: this.forceFlattenAllowLoss,
             beforeEndSec: this.forceFlattenBeforeEndSec,
-            minIntervalMs: this.forceFlattenMinIntervalMs,
-            rateLimitCooldownMs: this.rateLimitCooldownMs,
             noNewOrdersBeforeEndSec: this.noNewOrdersBeforeEndSec,
             cancelAllBeforeEndSec: this.cancelAllBeforeEndSec,
             secondsToEnd,
             inWindow,
-            rateLimited,
-            cooldownRemainingMs,
             hasInventory,
             inventory: this.state.currentYesPosition,
             avgEntryPriceYes: this.avgEntryPriceYes > 0 ? Number(this.avgEntryPriceYes.toFixed(6)) : 0,
@@ -1202,20 +1165,23 @@ export class TradeEngine {
         return Math.floor(this.marketEndUnixSec - Date.now() / 1000);
     }
 
+    private secondsSinceMarketStart(): number | null {
+        if (!this.marketStartUnixSec || !Number.isFinite(this.marketStartUnixSec)) return null;
+        return Math.floor(Date.now() / 1000 - this.marketStartUnixSec);
+    }
+
     private async cancelAllYesOrders() {
         if (!this.clobClient) return;
+        const now = Date.now();
+        if (this.clobLedgerMinIntervalMs > 0 && now - this.lastOpenOrdersFetchAt < this.clobLedgerMinIntervalMs) {
+            return;
+        }
+        this.lastOpenOrdersFetchAt = now;
+
         let open: unknown;
         try {
             open = await this.clobClient.getOpenOrders({ asset_id: this.yesTokenId });
         } catch (err) {
-            if (isRateLimitError(err)) {
-                this.rateLimitedUntil = Date.now() + this.rateLimitCooldownMs;
-                logger.warn(
-                    { marketId: this.marketId, yesTokenId: this.yesTokenId, cooldownMs: this.rateLimitCooldownMs },
-                    "Rate limited on getOpenOrders; entering cooldown",
-                );
-                return;
-            }
             logger.warn(
                 { err, marketId: this.marketId, yesTokenId: this.yesTokenId },
                 "getOpenOrders failed; skipping cancel-all for this cycle",

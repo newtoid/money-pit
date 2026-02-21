@@ -52,9 +52,9 @@ npm run dev
 - `MAX_POSITION`, `MAX_INVENTORY_NOTIONAL_USDC`
 - `TAKE_PROFIT_ENABLED`, `TAKE_PROFIT_PCT`
 - `REQUOTE_TICK_THRESHOLD`, `MIN_REQUOTE_MS`, `FORCE_REQUOTE_MS`
+- `CLOB_LEDGER_MIN_INTERVAL_MS` (throttle for `/data/orders` lookups)
 - `NO_NEW_ORDERS_BEFORE_END`, `CANCEL_ALL_BEFORE_END`
 - `FORCE_FLATTEN_ENABLED`, `FORCE_FLATTEN_BEFORE_END_SEC`, `FORCE_FLATTEN_ALLOW_LOSS`
-- `FORCE_FLATTEN_MIN_INTERVAL_MS`, `RATE_LIMIT_COOLDOWN_MS`
 
 ## Strategy In Plain English
 
@@ -79,10 +79,51 @@ This is how the bot behaves during normal operation:
 - If enabled, it stops normal strategy logic and focuses on selling open YES inventory
 - This is separate from "no new orders" and is meant to reduce leftover positions
 
+6. Orders are limited to the first minute of each 5-minute market:
+- Buy and sell order placement is only active during the first 60 seconds after market start.
+- Outside that first minute, the bot does not place new buy/sell orders.
+
 Simple example:
 - Bot buys YES at average 0.52
 - If market YES bid moves to 0.53+, exit condition is met
 - If bid stays 0.52 or lower, bot holds and waits
+
+## Limits In Dollars (Plain English)
+
+These settings control how much the bot can buy and hold:
+
+- `ORDER_SIZE`: how many shares it tries to buy per order.
+- `MAX_POSITION`: the maximum number of YES shares it can hold.
+- `MAX_INVENTORY_NOTIONAL_USDC`: the maximum approximate dollar value of held YES shares.
+
+The bot stops buying when it hits either limit first:
+- share limit (`MAX_POSITION`)
+- dollar-value limit (`MAX_INVENTORY_NOTIONAL_USDC`)
+
+With the example config in this repo:
+- `ORDER_SIZE=5`
+- `MAX_POSITION=10`
+- `MAX_INVENTORY_NOTIONAL_USDC=5`
+
+What that means:
+- It buys in chunks of about 5 shares.
+- It will not hold more than 10 shares.
+- It will also stop if held position value reaches about $5.
+
+Quick examples:
+- If YES is $0.50:
+  - 5 shares cost about $2.50
+  - 10 shares cost about $5.00
+- If YES is $0.60:
+  - 5 shares cost about $3.00
+  - 10 shares would cost $6.00, so the $5 value cap usually stops buys earlier
+- If YES is $0.30:
+  - 5 shares cost about $1.50
+  - 10 shares cost about $3.00, so the share cap is reached first
+
+Also:
+- `MIN_ORDER_SIZE` prevents very tiny orders.
+- `MIN_BUY_NOTIONAL_USDC` prevents buys that are too small in dollar value.
 
 ## Lag-Arb Overlay
 
@@ -159,8 +200,6 @@ Common reasons:
 - `FORCE_FLATTEN_ENABLED=true`: switch to exit-only behavior near the end.
 - `FORCE_FLATTEN_BEFORE_END_SEC`: when forced flatten starts.
 - `FORCE_FLATTEN_ALLOW_LOSS=false` (default): do not force-sell below average entry.
-- `FORCE_FLATTEN_MIN_INTERVAL_MS`: minimum delay between flatten attempts.
-- `RATE_LIMIT_COOLDOWN_MS`: pause after 429/1015 rate-limit responses.
 
 Important tradeoff:
 - If `FORCE_FLATTEN_ALLOW_LOSS=false`, the bot protects against realized losses, but flattening is not guaranteed if price stays below entry.
