@@ -638,7 +638,7 @@ export class TradeEngine {
             const remainingByNotional = next.bid > 0 ? remainingNotional / next.bid : 0;
 
             let buySize = Math.max(0, Math.min(this.orderSize * lag.buyMult, remainingByPosition, remainingByNotional));
-            let sellSize = Math.max(0, Math.min(this.orderSize * lag.sellMult, currentPos));
+            let sellSize = 0;
 
             const profitableExit = this.takeProfitSignal();
             const bullishTracker = lag.lagMode === "bullish_yes";
@@ -684,14 +684,13 @@ export class TradeEngine {
                 effectiveAsk = exitSignal.exitPrice;
                 const failsafeActive = this.consecutiveExitFailures >= this.exitFailsafeAfterFails;
                 if (failsafeActive && this.exitFailsafeExtraTicks > 0) {
-                    const reduced = clampToTickBounds(
+                    effectiveAsk = clampToTickBounds(
                         roundDownToTick(
                             effectiveAsk - (this.exitFailsafeExtraTicks * this.tickSize),
                             this.tickSize,
                         ),
                         this.tickSize,
                     );
-                    effectiveAsk = reduced;
                 }
                 // On take-profit, prioritize flattening inventory quickly.
                 sellSize = Math.max(0, currentPos);
@@ -995,7 +994,20 @@ export class TradeEngine {
         try {
             const url = `https://data-api.polymarket.com/positions?user=${encodeURIComponent(this.makerAddress)}&sizeThreshold=0`;
             const res = await fetch(url);
-            if (!res.ok) throw new Error(`positions HTTP ${res.status}`);
+            if (!res.ok) {
+                const now = Date.now();
+                if (now - this.lastPositionPollErrorAt > 15000) {
+                    logger.warn(
+                        {
+                            status: res.status,
+                            makerAddress: this.makerAddress,
+                        },
+                        "Position poll failed (non-200)",
+                    );
+                    this.lastPositionPollErrorAt = now;
+                }
+                return;
+            }
             const rows = (await res.json()) as PositionRow[];
             if (!Array.isArray(rows)) return;
 
@@ -1307,7 +1319,7 @@ export class TradeEngine {
         );
         const ready = inWindow && hasInventory && candidateExit !== null && !blockedByNoLoss;
 
-        let reason = "idle";
+        let reason: string;
         if (!this.forceFlattenEnabled) reason = "disabled";
         else if (secondsToEnd === null) reason = "market_end_unknown";
         else if (!inWindow) reason = "outside_force_flatten_window";

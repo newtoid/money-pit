@@ -16,21 +16,6 @@ function htmlPage() {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Polymarket 5m Maker</title>
   <style>
-    :root {
-      --bg:#0c1222;
-      --card:#111827;
-      --card2:#0f172a;
-      --muted:#8ca0bf;
-      --text:#e5edf8;
-      --ok:#34d399;
-      --bad:#f87171;
-      --warn:#f59e0b;
-      --line1:#60a5fa;
-      --line2:#fbbf24;
-      --line3:#a78bfa;
-      --line4:#22c55e;
-      --grid:#334155;
-    }
     * { box-sizing:border-box; }
     body {
       margin:0;
@@ -38,7 +23,7 @@ function htmlPage() {
         radial-gradient(1000px 500px at 10% -10%, #1e293b55, transparent),
         radial-gradient(1200px 600px at 100% 0%, #1d4ed855, transparent),
         linear-gradient(145deg, #0b1020, #0f172a 45%, #111827);
-      color:var(--text);
+      color:#e5edf8;
       font:13px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
     .wrap { max-width:1400px; margin:20px auto; padding:0 14px; }
@@ -58,10 +43,10 @@ function htmlPage() {
     @media (max-width: 980px){
       .span-3,.span-4,.span-6,.span-12{grid-column:span 12;}
     }
-    .k { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
+    .k { color:#8ca0bf; font-size:11px; text-transform:uppercase; letter-spacing:.06em; }
     .v { margin-top:6px; font-size:16px; word-break:break-word; }
-    .small { margin-top:4px; color:var(--muted); font-size:12px; }
-    .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+    .small { margin-top:4px; color:#8ca0bf; font-size:12px; }
+    .ok { color:#34d399; } .bad { color:#f87171; } .warn { color:#f59e0b; }
     .badge {
       display:inline-block;
       padding:2px 8px;
@@ -71,18 +56,18 @@ function htmlPage() {
       letter-spacing:.02em;
       border:1px solid #334155;
       background:#0b1220;
-      color:var(--muted);
+      color:#8ca0bf;
     }
     .badge.ok { border-color:#14532d; background:#052e1e; color:#86efac; }
     .badge.bad { border-color:#7f1d1d; background:#3f0d0d; color:#fca5a5; }
     .badge.warn { border-color:#78350f; background:#3f1f0a; color:#fcd34d; }
     .chart { width:100%; height:180px; display:block; margin-top:6px; border-radius:8px; background:#0b1220; border:1px solid #1f2a44; }
-    .legend { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; color:var(--muted); font-size:11px; }
+    .legend { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; color:#8ca0bf; font-size:11px; }
     .dot { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:4px; vertical-align:middle; }
     pre { margin:0; white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto; }
     table { width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
     th, td { border-bottom:1px solid #33415566; padding:6px 4px; text-align:left; vertical-align:top; }
-    th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+    th { color:#8ca0bf; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
   </style>
 </head>
 <body>
@@ -100,9 +85,9 @@ function htmlPage() {
         <div class="k">Quote Vs Fair (Polymarket)</div>
         <canvas id="fairChart" class="chart"></canvas>
         <div class="legend">
-          <span><i class="dot" style="background:var(--line1)"></i>fairYes</span>
-          <span><i class="dot" style="background:var(--line2)"></i>bid</span>
-          <span><i class="dot" style="background:var(--line3)"></i>ask</span>
+          <span><i class="dot" style="background:#60a5fa"></i>fairYes</span>
+          <span><i class="dot" style="background:#fbbf24"></i>bid</span>
+          <span><i class="dot" style="background:#a78bfa"></i>ask</span>
         </div>
       </div>
 
@@ -110,9 +95,9 @@ function htmlPage() {
         <div class="k">Spot / Signal Edge</div>
         <canvas id="edgeChart" class="chart"></canvas>
         <div class="legend">
-          <span><i class="dot" style="background:var(--line1)"></i>signalFair</span>
-          <span><i class="dot" style="background:var(--line2)"></i>polyFair</span>
-          <span><i class="dot" style="background:var(--line4)"></i>edge</span>
+          <span><i class="dot" style="background:#60a5fa"></i>signalFair</span>
+          <span><i class="dot" style="background:#fbbf24"></i>polyFair</span>
+          <span><i class="dot" style="background:#22c55e"></i>edge</span>
         </div>
       </div>
 
@@ -120,24 +105,24 @@ function htmlPage() {
         <div class="k">Lag (Spot vs Polymarket, bps)</div>
         <canvas id="lagChart" class="chart"></canvas>
         <div class="legend">
-          <span><i class="dot" style="background:var(--line1)"></i>spotMoveBps</span>
-          <span><i class="dot" style="background:var(--line2)"></i>polyImpliedMoveBps</span>
-          <span><i class="dot" style="background:var(--line4)"></i>lagBps</span>
+          <span><i class="dot" style="background:#60a5fa"></i>spotMoveBps</span>
+          <span><i class="dot" style="background:#fbbf24"></i>polyImpliedMoveBps</span>
+          <span><i class="dot" style="background:#22c55e"></i>lagBps</span>
         </div>
       </div>
 
       <div class="card span-6">
         <div class="k">BTC Spot</div>
         <canvas id="spotChart" class="chart"></canvas>
-        <div class="legend"><span><i class="dot" style="background:var(--line1)"></i>spotPrice</span></div>
+        <div class="legend"><span><i class="dot" style="background:#60a5fa"></i>spotPrice</span></div>
       </div>
 
       <div class="card span-6">
         <div class="k">Inventory / PnL</div>
         <canvas id="riskChart" class="chart"></canvas>
         <div class="legend">
-          <span><i class="dot" style="background:var(--line2)"></i>yesPosition</span>
-          <span><i class="dot" style="background:var(--line3)"></i>netPnl</span>
+          <span><i class="dot" style="background:#fbbf24"></i>yesPosition</span>
+          <span><i class="dot" style="background:#a78bfa"></i>netPnl</span>
         </div>
       </div>
 
@@ -345,8 +330,12 @@ function htmlPage() {
       try {
         const res = await fetch('/api/redeem', { method: 'POST' });
         const body = await res.json();
-        if (!res.ok) throw new Error(body && body.error ? body.error : 'redeem failed');
-        document.getElementById('redeemables2').textContent = 'manual redeem: ' + JSON.stringify(body);
+        if (res.ok) {
+          document.getElementById('redeemables2').textContent = 'manual redeem: ' + JSON.stringify(body);
+        } else {
+          const msg = body && body.error ? body.error : 'redeem failed';
+          document.getElementById('redeemables2').textContent = 'manual redeem error: ' + msg;
+        }
       } catch (e) {
         document.getElementById('redeemables2').textContent = 'manual redeem error: ' + String(e);
       } finally {
