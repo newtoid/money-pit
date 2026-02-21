@@ -167,6 +167,16 @@ function getEnvBool(name: string, fallback: boolean): boolean {
     return fallback;
 }
 
+function parseHhMmToMinutes(raw: string, fallback: number): number {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(raw).trim());
+    if (!m) return fallback;
+    const hh = Number(m[1]);
+    const mm = Number(m[2]);
+    if (!Number.isFinite(hh) || !Number.isFinite(mm)) return fallback;
+    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
+    return (hh * 60) + mm;
+}
+
 export class TradeEngine {
     private readonly marketId: string;
     private readonly tokenIds: string[];
@@ -210,6 +220,9 @@ export class TradeEngine {
     private readonly exitLayeredEnabled = getEnvBool("EXIT_LAYERED_ENABLED", true);
     private readonly exitAggressivePct = Math.max(0, Math.min(0.95, getEnvNumber("EXIT_AGGRESSIVE_PCT", 0.35)));
     private readonly exitAggressiveTicks = Math.max(0, getEnvInt("EXIT_AGGRESSIVE_TICKS", 1));
+    private readonly exitFastUndercutTicks = Math.max(0, getEnvInt("EXIT_FAST_UNDERCUT_TICKS", 1));
+    private readonly exitMinProfitTicks = Math.max(0, getEnvInt("EXIT_MIN_PROFIT_TICKS", 1));
+    private readonly exitCatchupBufferBps = Math.max(0, getEnvNumber("EXIT_CATCHUP_BUFFER_BPS", 0));
     private readonly exitFailsafeAfterFails = Math.max(1, getEnvInt("EXIT_FAILSAFE_AFTER_FAILS", 3));
     private readonly exitFailsafeExtraTicks = Math.max(0, getEnvInt("EXIT_FAILSAFE_EXTRA_TICKS", 1));
     private readonly maxLossPerMarketUsdc = Math.max(0, getEnvNumber("MAX_LOSS_PER_MARKET_USDC", 0));
@@ -222,6 +235,9 @@ export class TradeEngine {
             ? "guarantee_flat"
             : "protect_price"
     );
+    private readonly tradeWindowEnabled = getEnvBool("TRADE_WINDOW_ENABLED", true);
+    private readonly tradeWindowStartGmtMin = parseHhMmToMinutes(process.env.TRADE_WINDOW_START_GMT ?? "08:30", (8 * 60) + 30);
+    private readonly tradeWindowEndGmtMin = parseHhMmToMinutes(process.env.TRADE_WINDOW_END_GMT ?? "10:30", (10 * 60) + 30);
     private readonly venueMinOrderSize = Math.max(5, getEnvNumber("VENUE_MIN_ORDER_SIZE", 5));
 
     private readonly books = new Map<string, TopOfBook>();
@@ -253,6 +269,7 @@ export class TradeEngine {
     private inFlight = false;
     private lastQuote: LastQuote = null;
     private avgEntryPriceYes = 0;
+    private entrySpotMoveTargetBps: number | null = null;
     private realizedPnlYes = 0;
     private lastFill: { at: number; tokenId: string; side: string; size: number; price: number } | null = null;
     private lastInsufficientCollateralLogAt = 0;
@@ -265,6 +282,8 @@ export class TradeEngine {
     private lastAllowanceSyncAttemptAt = 0;
     private lastPositionPollErrorAt = 0;
     private lastCancelAllAt = 0;
+    private lastWindowCancelAt = 0;
+    private lastWindowBlockLogAt = 0;
     private lastOpenOrdersFetchAt = 0;
     private lastForceFlattenLogAt = 0;
     private readonly makerAddress: string | null;
@@ -522,14 +541,16 @@ export class TradeEngine {
         }
 
         const amplitude = Math.min(1, Math.max(0, (Math.abs(lagBps) - this.lagExitBps) / Math.max(1, this.lagEnterBps)));
-        const lagSkew = this.lagMaxSkew * amplitude * this.lagRegime;
+        // Directional mode: only apply lag-driven skew/sizing when BTC leads Polymarket (bullish regime).
+        const bullishRegime = this.lagRegime > 0 ? 1 : 0;
+        const lagSkew = this.lagMaxSkew * amplitude * bullishRegime;
         return {
             lagSkew,
             lagBps,
             lagMode: this.lagRegime > 0 ? "bullish_yes" : "bearish_yes",
             buyMult: this.lagRegime > 0 ? this.lagSizeMult : 1,
-            sellMult: this.lagRegime < 0 ? this.lagSizeMult : 1,
-            reason: "active",
+            sellMult: 1,
+            reason: this.lagRegime > 0 ? "active_bullish" : "bearish_ignored",
         };
     }
 
@@ -541,6 +562,17 @@ export class TradeEngine {
         const bidTicks = Math.abs(nextBid - this.state.lastPlacedBid) / this.tickSize;
         const askTicks = Math.abs(nextAsk - this.state.lastPlacedAsk) / this.tickSize;
         return bidTicks >= this.requoteTickThreshold || askTicks >= this.requoteTickThreshold;
+    }
+
+    private isInGmtTradeWindow(now = new Date()): boolean {
+        if (!this.tradeWindowEnabled) return true;
+        const currentMin = (now.getUTCHours() * 60) + now.getUTCMinutes();
+        const start = this.tradeWindowStartGmtMin;
+        const end = this.tradeWindowEndGmtMin;
+        if (start <= end) {
+            return currentMin >= start && currentMin <= end;
+        }
+        return currentMin >= start || currentMin <= end;
     }
 
     private normalizeOrderSize(size: number, price: number, isBuy: boolean): number {
@@ -563,6 +595,31 @@ export class TradeEngine {
         this.pushFairSample(fairYes);
 
         const secondsToEnd = this.secondsToMarketEnd();
+        if (!this.isInGmtTradeWindow()) {
+            const now = Date.now();
+            if (now - this.lastWindowCancelAt >= 5000) {
+                this.lastWindowCancelAt = now;
+                try {
+                    await this.cancelAllYesOrders();
+                } catch (err) {
+                    this.state.orderErrors += 1;
+                    logger.error({ err, marketId: this.marketId }, "Cancel-all outside GMT trade window failed");
+                }
+            }
+            if (now - this.lastWindowBlockLogAt >= 30000) {
+                this.lastWindowBlockLogAt = now;
+                logger.info(
+                    {
+                        marketId: this.marketId,
+                        startGmt: process.env.TRADE_WINDOW_START_GMT ?? "08:30",
+                        endGmt: process.env.TRADE_WINDOW_END_GMT ?? "10:30",
+                    },
+                    "Trading blocked outside GMT window",
+                );
+            }
+            return;
+        }
+
         if (
             secondsToEnd !== null
             && this.cancelAllBeforeEndSec > 0
@@ -1096,6 +1153,14 @@ export class TradeEngine {
             }
             if (nextPos > 0) {
                 this.avgEntryPriceYes = ((this.avgEntryPriceYes * pos) + (price * size)) / nextPos;
+                if (this.spotMoveBps !== null && Number.isFinite(this.spotMoveBps)) {
+                    if (this.entrySpotMoveTargetBps === null || pos <= 0) {
+                        this.entrySpotMoveTargetBps = this.spotMoveBps;
+                    } else {
+                        this.entrySpotMoveTargetBps =
+                            ((this.entrySpotMoveTargetBps * pos) + (this.spotMoveBps * size)) / nextPos;
+                    }
+                }
             }
             this.state.currentYesPosition = nextPos;
             return;
@@ -1119,6 +1184,7 @@ export class TradeEngine {
                 }
             }
             this.avgEntryPriceYes = 0;
+            this.entrySpotMoveTargetBps = null;
             this.activePositionOpenedAt = null;
             this.realizedPnlAtPositionOpen = this.realizedPnlYes;
         }
@@ -1153,8 +1219,27 @@ export class TradeEngine {
         const yes = this.books.get(this.yesTokenId);
         const bestBid = yes?.bid ?? null;
         if (bestBid === null || this.avgEntryPriceYes <= 0) return { active: false, exitPrice: 0, reason: "missing_bid_or_entry" };
-        if (bestBid <= this.avgEntryPriceYes) return { active: false, exitPrice: 0, reason: "price_not_risen" };
-        const exitPrice = clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
+        if (this.entrySpotMoveTargetBps !== null) {
+            const fairYes = this.currentFairYes();
+            const polyPriceForCatchup = fairYes ?? bestBid;
+            const polyImpliedMoveBps = ((polyPriceForCatchup - 0.5) / this.signalK) * 10000;
+            if ((polyImpliedMoveBps + this.exitCatchupBufferBps) < this.entrySpotMoveTargetBps) {
+                return { active: false, exitPrice: 0, reason: "waiting_for_polymarket_catchup" };
+            }
+        }
+        const minProfitTarget = clampToTickBounds(
+            roundUpToTick(this.avgEntryPriceYes + (this.exitMinProfitTicks * this.tickSize), this.tickSize),
+            this.tickSize,
+        );
+        if (bestBid < minProfitTarget) return { active: false, exitPrice: 0, reason: "price_not_risen" };
+        const undercutCandidate = clampToTickBounds(
+            roundDownToTick(bestBid - (this.exitFastUndercutTicks * this.tickSize), this.tickSize),
+            this.tickSize,
+        );
+        const exitPrice = clampToTickBounds(
+            Math.max(minProfitTarget, undercutCandidate),
+            this.tickSize,
+        );
         return { active: true, exitPrice, reason: "price_risen_after_bullish_tracker" };
     }
 
@@ -1447,12 +1532,20 @@ export class TradeEngine {
                 enabled: this.lagArbEnabled,
                 regime: this.lagRegime,
                 spotMoveBps: this.spotMoveBps,
+                entrySpotMoveTargetBps: this.entrySpotMoveTargetBps,
                 spotUpdatedAt: this.spotUpdatedAt,
                 spotConnected: this.spotConnected,
                 enterBps: this.lagEnterBps,
                 exitBps: this.lagExitBps,
+                exitCatchupBufferBps: this.exitCatchupBufferBps,
                 maxSkew: this.lagMaxSkew,
                 sizeMult: this.lagSizeMult,
+            },
+            tradeWindow: {
+                enabled: this.tradeWindowEnabled,
+                startGmt: process.env.TRADE_WINDOW_START_GMT ?? "08:30",
+                endGmt: process.env.TRADE_WINDOW_END_GMT ?? "10:30",
+                active: this.isInGmtTradeWindow(),
             },
             forceFlatten: this.forceFlattenStatus(),
         };

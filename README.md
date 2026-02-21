@@ -43,6 +43,8 @@ npm run dev
 
 - `DRY_RUN=true`: decisions only, no orders posted
 - `TRADING_ENABLED=false`: disables live trading paths
+- `TRADE_WINDOW_ENABLED=true`: only allow order placement inside a GMT time window
+- `TRADE_WINDOW_START_GMT=08:30`, `TRADE_WINDOW_END_GMT=10:30`: GMT window bounds (uses UTC clock)
 - `TRADING_USE_SIGNER_AS_MAKER=true`: signer acts as maker
 - `TRADING_USE_SIGNER_AS_MAKER=false`: uses funder/maker mode (`TRADING_FUNDER_ADDRESS`)
 
@@ -57,6 +59,8 @@ npm run dev
 - `BUY_NO_CHASE_WINDOW_MS`, `BUY_NO_CHASE_MAX_UP_BPS` (skip buying into fast upward moves)
 - `MAX_LOSS_PER_MARKET_USDC` (stop new buys once market-level loss limit is breached)
 - `EXIT_LAYERED_ENABLED`, `EXIT_AGGRESSIVE_PCT`, `EXIT_AGGRESSIVE_TICKS` (faster two-step exits)
+- `EXIT_FAST_UNDERCUT_TICKS`, `EXIT_MIN_PROFIT_TICKS` (faster exits while still requiring a small profit)
+- `EXIT_CATCHUP_BUFFER_BPS` (extra tolerance for catch-up exit trigger against buy-time BTC target)
 - `EXIT_FAILSAFE_AFTER_FAILS`, `EXIT_FAILSAFE_EXTRA_TICKS` (more aggressive exits after repeated failures)
 - `VENUE_MIN_ORDER_SIZE` (hard minimum size guard; default 5)
 - `CLOB_LEDGER_MIN_INTERVAL_MS` (throttle for `/data/orders` lookups)
@@ -78,8 +82,10 @@ This is how the bot behaves during normal operation:
 - It can block "chasing" after a quick pop (`BUY_NO_CHASE_*`)
 
 3. After it has bought YES, it waits for Polystorm YES price to rise:
+- It records BTC move at buy time and waits for Polymarket implied move to catch up to that level
 - If the YES bid rises above the bot's average entry price, it can sell to exit
 - Existing take-profit logic can also trigger an exit if enabled
+- It can undercut best bid by a small amount for faster fills, while still requiring a minimum profit in ticks (`EXIT_FAST_UNDERCUT_TICKS`, `EXIT_MIN_PROFIT_TICKS`)
 - Exit can be layered: an aggressive first slice plus a remainder (`EXIT_LAYERED_*`)
 
 4. If the rise has not happened yet:
@@ -94,6 +100,10 @@ This is how the bot behaves during normal operation:
 6. Buys are limited to an early market window:
 - `BUY_WINDOW_SEC` controls how long new buys are allowed after market start (default `180` = first 3 minutes).
 - Sell/exit orders can still be placed after the buy window so inventory can be closed before expiry.
+
+7. Trades are also restricted by clock time (GMT):
+- With `TRADE_WINDOW_ENABLED=true`, the bot only places orders between `TRADE_WINDOW_START_GMT` and `TRADE_WINDOW_END_GMT`.
+- Outside that GMT window, it stops placing orders and cancels open YES orders.
 
 Simple example:
 - Bot buys YES at average 0.52
