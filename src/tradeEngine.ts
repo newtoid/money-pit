@@ -676,9 +676,6 @@ export class TradeEngine {
                 buyGateReason = "max_loss_per_market_breached";
             }
 
-            // Directional mode: do not place passive sells while waiting for price-rise exit.
-            sellSize = 0;
-
             if (exitSignal.active) {
                 buySize = 0;
                 effectiveAsk = exitSignal.exitPrice;
