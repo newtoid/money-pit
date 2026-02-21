@@ -52,6 +52,7 @@ npm run dev
 - `MAX_POSITION`, `MAX_INVENTORY_NOTIONAL_USDC`
 - `TAKE_PROFIT_ENABLED`, `TAKE_PROFIT_PCT`
 - `REQUOTE_TICK_THRESHOLD`, `MIN_REQUOTE_MS`, `FORCE_REQUOTE_MS`
+- `BUY_WINDOW_SEC` (buy entries allowed only in this many seconds from market open)
 - `CLOB_LEDGER_MIN_INTERVAL_MS` (throttle for `/data/orders` lookups)
 - `NO_NEW_ORDERS_BEFORE_END`, `CANCEL_ALL_BEFORE_END`
 - `FORCE_FLATTEN_ENABLED`, `FORCE_FLATTEN_BEFORE_END_SEC`, `FORCE_FLATTEN_ALLOW_LOSS`
@@ -79,9 +80,9 @@ This is how the bot behaves during normal operation:
 - If enabled, it stops normal strategy logic and focuses on selling open YES inventory
 - This is separate from "no new orders" and is meant to reduce leftover positions
 
-6. Orders are limited to the first minute of each 5-minute market:
-- Buy and sell order placement is only active during the first 60 seconds after market start.
-- Outside that first minute, the bot does not place new buy/sell orders.
+6. Buys are limited to an early market window:
+- `BUY_WINDOW_SEC` controls how long new buys are allowed after market start (default `180` = first 3 minutes).
+- Sell/exit orders can still be placed after the buy window so inventory can be closed before expiry.
 
 Simple example:
 - Bot buys YES at average 0.52

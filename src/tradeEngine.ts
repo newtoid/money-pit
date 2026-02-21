@@ -199,6 +199,7 @@ export class TradeEngine {
     private readonly lagStaleMs = Math.max(500, getEnvInt("LAG_STALE_MS", 2500));
     private readonly lagDisableBeforeEndSec = Math.max(0, getEnvInt("LAG_DISABLE_BEFORE_END_SEC", 35));
     private readonly signalK = Math.max(1, getEnvNumber("SIGNAL_K", 60));
+    private readonly buyWindowSec = Math.max(0, getEnvInt("BUY_WINDOW_SEC", 180));
     private readonly clobLedgerMinIntervalMs = Math.max(0, getEnvInt("CLOB_LEDGER_MIN_INTERVAL_MS", 100));
     private readonly forceFlattenEnabled = getEnvBool("FORCE_FLATTEN_ENABLED", true);
     private readonly forceFlattenBeforeEndSec = Math.max(0, getEnvInt("FORCE_FLATTEN_BEFORE_END_SEC", 40));
@@ -527,9 +528,7 @@ export class TradeEngine {
         this.state.quoteCycles += 1;
 
         const secondsSinceStart = this.secondsSinceMarketStart();
-        if (secondsSinceStart === null || secondsSinceStart < 0 || secondsSinceStart > 60) {
-            return;
-        }
+        const buyWindowActive = secondsSinceStart !== null && secondsSinceStart >= 0 && secondsSinceStart <= this.buyWindowSec;
 
         const secondsToEnd = this.secondsToMarketEnd();
         if (
@@ -618,6 +617,10 @@ export class TradeEngine {
 
             if (!bullishTracker) {
                 // Directional mode: only buy when BTC tracker leads Polymarket.
+                buySize = 0;
+            }
+            if (!buyWindowActive) {
+                // Allow exits all market, but only open new buys inside BUY_WINDOW_SEC.
                 buySize = 0;
             }
 
