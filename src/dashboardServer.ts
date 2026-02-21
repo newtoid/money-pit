@@ -374,7 +374,12 @@ function htmlPage() {
         document.getElementById('process').innerHTML =
           '<span class="'+cls(s.process.running)+'">' + (s.process.running ? 'RUNNING' : 'STOPPED') + '</span>'
           + ' · dryRun=' + s.config.dryRun + ' · trading=' + s.config.tradingEnabled;
-        document.getElementById('uptime').textContent = 'uptime ' + s.process.uptimeSec + 's · creds=' + s.config.credsSource;
+        const ml = s.marketLifecycle || {};
+        document.getElementById('uptime').textContent = 'uptime ' + s.process.uptimeSec + 's'
+          + ' · creds=' + s.config.credsSource
+          + ' · marketsClosed=' + (ml.completed ?? 0)
+          + ' · flatOnHandoff=' + num(ml.flatRatePct, 1) + '%'
+          + ' · leftoverMarkets=' + (ml.leftoverAtHandoff ?? 0);
 
         document.getElementById('market').textContent = (s.market.slug || '-') + ' | ' + (s.market.marketId || '-');
         document.getElementById('window').textContent = 'tokens=' + ((s.market.tokenIds || []).length) + ' · question=' + (s.market.question || '-');
@@ -482,9 +487,16 @@ function htmlPage() {
           + ' buy=' + (ctr.buyOrdersPlaced ?? 0)
           + ' sell=' + (ctr.sellOrdersPlaced ?? 0)
           + ' fills=' + (ctr.fills ?? 0);
+        const roundTrips = Number(ctr.completedRoundTrips ?? 0);
+        const wins = Number(ctr.winningRoundTrips ?? 0);
+        const losses = Number(ctr.losingRoundTrips ?? 0);
+        const winRate = roundTrips > 0 ? ((wins / roundTrips) * 100) : null;
         document.getElementById('exec2').textContent =
           'errors=' + (ctr.orderErrors ?? 0)
           + ' · skippedCollateral=' + (ctr.skippedInsufficientCollateral ?? 0)
+          + ' · roundTrips=' + roundTrips
+          + ' · wins/losses=' + wins + '/' + losses
+          + ' · winRate=' + num(winRate, 1) + '%'
           + ' · allowance=' + ((e.collateral && e.collateral.allowanceRaw) ? e.collateral.allowanceRaw : '-');
 
         
@@ -494,6 +506,7 @@ function htmlPage() {
           + ' · inv=' + num(ff.inventory, 2);
         document.getElementById('flatten2').textContent =
           'reason=' + (ff.reason || '-')
+          + ' · mode=' + (ff.mode || '-')
           + ' · allowLoss=' + (ff.allowLoss ? 'yes' : 'no')
           + ' · exit@' + num(ff.candidateExit, 4)
           + ' vs avg@' + num(ff.avgEntryPriceYes, 4)
@@ -514,9 +527,12 @@ function htmlPage() {
           + ' · cash=' + usd(cashUsdc)
           + ' · inv(est)=' + usd(invUsdc);
         document.getElementById('portfolio2').textContent =
-          'rolling P/L: 1m ' + dlt(p1m)
+          'rolling gains/losses: 1m ' + dlt(p1m)
           + ' · 5m ' + dlt(p5m)
           + ' · 15m ' + dlt(p15m)
+          + ' · avgEntryLag=' + num(pnl.avgEntryLagBps, 1) + 'bps'
+          + ' · avgHold=' + num(pnl.avgHoldSec, 1) + 's'
+          + ' · currentHold=' + num(pnl.currentHoldSec, 1) + 's'
           + ' · pos=' + num(e.currentYesPosition, 2)
           + ' @fair ' + num((Number.isFinite(fairYes) ? fairYes : null), 4);
 

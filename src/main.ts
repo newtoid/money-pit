@@ -54,6 +54,13 @@ async function main() {
         user: { connected: false, messages: 0, reconnects: 0, lastCloseCode: null as number | null, lastCloseReason: "" },
         market: { connected: false, messages: 0, reconnects: 0, lastCloseCode: null as number | null, lastCloseReason: "" },
     };
+    const marketLifecycle = {
+        completed: 0,
+        flatAtHandoff: 0,
+        leftoverAtHandoff: 0,
+        leftoverSharesTotal: 0,
+        lastFinalizedMarketId: null as string | null,
+    };
 
     const configuredSlug = env.MARKET_SLUG;
     const slugUnix = configuredSlug?.match(/(\d+)$/)?.[1];
@@ -156,8 +163,23 @@ async function main() {
     };
     let active: ActiveRuntime | null = null;
 
+    const finalizeActiveMarket = () => {
+        if (!active) return;
+        const snap = active.engine.getSnapshot();
+        const pos = Number(snap?.currentYesPosition ?? 0);
+        marketLifecycle.completed += 1;
+        marketLifecycle.lastFinalizedMarketId = active.marketId;
+        if (pos <= 0) {
+            marketLifecycle.flatAtHandoff += 1;
+        } else {
+            marketLifecycle.leftoverAtHandoff += 1;
+            marketLifecycle.leftoverSharesTotal += pos;
+        }
+    };
+
     const stopActiveRuntime = () => {
         if (!active) return;
+        finalizeActiveMarket();
         active.userWs.stop();
         active.marketWs.stop();
         active.engine.stop();
@@ -336,6 +358,12 @@ async function main() {
                 running: true,
                 startedAt,
                 uptimeSec: Math.floor((Date.now() - startedAt) / 1000),
+            },
+            marketLifecycle: {
+                ...marketLifecycle,
+                flatRatePct: marketLifecycle.completed > 0
+                    ? (marketLifecycle.flatAtHandoff / marketLifecycle.completed) * 100
+                    : null,
             },
             config: {
                 dryRun: env.DRY_RUN,

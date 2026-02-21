@@ -53,6 +53,12 @@ npm run dev
 - `TAKE_PROFIT_ENABLED`, `TAKE_PROFIT_PCT`
 - `REQUOTE_TICK_THRESHOLD`, `MIN_REQUOTE_MS`, `FORCE_REQUOTE_MS`
 - `BUY_WINDOW_SEC` (buy entries allowed only in this many seconds from market open)
+- `BUY_MIN_LAG_BPS` (minimum lag edge required to open buys)
+- `BUY_NO_CHASE_WINDOW_MS`, `BUY_NO_CHASE_MAX_UP_BPS` (skip buying into fast upward moves)
+- `MAX_LOSS_PER_MARKET_USDC` (stop new buys once market-level loss limit is breached)
+- `EXIT_LAYERED_ENABLED`, `EXIT_AGGRESSIVE_PCT`, `EXIT_AGGRESSIVE_TICKS` (faster two-step exits)
+- `EXIT_FAILSAFE_AFTER_FAILS`, `EXIT_FAILSAFE_EXTRA_TICKS` (more aggressive exits after repeated failures)
+- `VENUE_MIN_ORDER_SIZE` (hard minimum size guard; default 5)
 - `CLOB_LEDGER_MIN_INTERVAL_MS` (throttle for `/data/orders` lookups)
 - `NO_NEW_ORDERS_BEFORE_END`, `CANCEL_ALL_BEFORE_END`
 - `FORCE_FLATTEN_ENABLED`, `FORCE_FLATTEN_BEFORE_END_SEC`, `FORCE_FLATTEN_ALLOW_LOSS`
@@ -68,10 +74,13 @@ This is how the bot behaves during normal operation:
 2. If BTC tracker is higher than Polystorm tracker (bullish lag):
 - The bot prioritizes **buying YES**
 - It does **not** place normal sell quotes right away
+- It can require extra lag edge (`BUY_MIN_LAG_BPS`) before buying
+- It can block "chasing" after a quick pop (`BUY_NO_CHASE_*`)
 
 3. After it has bought YES, it waits for Polystorm YES price to rise:
 - If the YES bid rises above the bot's average entry price, it can sell to exit
 - Existing take-profit logic can also trigger an exit if enabled
+- Exit can be layered: an aggressive first slice plus a remainder (`EXIT_LAYERED_*`)
 
 4. If the rise has not happened yet:
 - The bot keeps waiting instead of selling early
@@ -79,6 +88,8 @@ This is how the bot behaves during normal operation:
 5. Near market end, it can switch to flatten mode:
 - If enabled, it stops normal strategy logic and focuses on selling open YES inventory
 - This is separate from "no new orders" and is meant to reduce leftover positions
+- `FORCE_FLATTEN_MODE=protect_price` tries to avoid realizing losses while flattening
+- `FORCE_FLATTEN_MODE=guarantee_flat` prioritizes exiting inventory before expiry
 
 6. Buys are limited to an early market window:
 - `BUY_WINDOW_SEC` controls how long new buys are allowed after market start (default `180` = first 3 minutes).
@@ -211,6 +222,19 @@ Important tradeoff:
 - `lag` and `BULLISH YES` badge: confirms BTC tracker > Polymarket tracker setup.
 - Inventory and average entry: confirms buy exposure exists.
 - Sell/skip reasons in logs (for example `waiting_for_price_rise_exit`): confirms it is waiting for catch-up.
+
+### Dashboard Cheat Sheet (Plain English)
+
+- `equity(est)`: estimated total account value right now (`cash + inventory value`).
+- `cash`: your current USDC balance.
+- `inv(est)`: estimated value of open YES position at current fair price.
+- `rolling gains/losses (1m/5m/15m)`: short-term change in estimated equity over those windows.
+- `roundTrips`: completed buy-then-sell cycles.
+- `wins/losses`: how many completed cycles finished positive vs negative.
+- `winRate`: percentage of completed cycles that were wins.
+- `marketsClosed`: number of markets the bot has handed off/closed.
+- `flatOnHandoff`: percent of closed markets where inventory was fully flat at handoff.
+- `leftoverMarkets`: number of markets that ended with leftover position.
 
 ## Safety Notes
 

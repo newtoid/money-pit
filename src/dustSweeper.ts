@@ -110,7 +110,8 @@ export class DustSweeper {
         this.enabled = parseBool(process.env.DUST_SWEEPER_ENABLED, false) && !env.DRY_RUN;
         this.intervalMs = Math.max(15000, Number(process.env.DUST_SWEEPER_INTERVAL_MS ?? "60000"));
         this.maxPerCycle = Math.max(1, Number(process.env.DUST_SWEEPER_MAX_PER_CYCLE ?? "1"));
-        this.minOrderSize = Math.max(1, Number(process.env.MIN_ORDER_SIZE ?? "5"));
+        const venueMin = Math.max(5, Number(process.env.VENUE_MIN_ORDER_SIZE ?? "5"));
+        this.minOrderSize = Math.max(venueMin, Number(process.env.MIN_ORDER_SIZE ?? "5"));
         this.minBid = Math.max(0.001, Number(process.env.DUST_SWEEPER_MIN_BID ?? "0.03"));
         this.maxCycleNotional = Math.max(0.5, Number(process.env.DUST_SWEEPER_MAX_NOTIONAL_USDC ?? "3"));
         this.allowShort = parseBool(process.env.DUST_SWEEPER_ALLOW_SHORT, true);

@@ -25,6 +25,10 @@ type QuoteState = {
     buyOrdersPlaced: number;
     sellOrdersPlaced: number;
     fills: number;
+    entryCount: number;
+    completedRoundTrips: number;
+    winningRoundTrips: number;
+    losingRoundTrips: number;
 };
 
 type EngineOpts = {
@@ -200,10 +204,25 @@ export class TradeEngine {
     private readonly lagDisableBeforeEndSec = Math.max(0, getEnvInt("LAG_DISABLE_BEFORE_END_SEC", 35));
     private readonly signalK = Math.max(1, getEnvNumber("SIGNAL_K", 60));
     private readonly buyWindowSec = Math.max(0, getEnvInt("BUY_WINDOW_SEC", 180));
+    private readonly buyMinLagBps = Math.max(0, getEnvNumber("BUY_MIN_LAG_BPS", 6));
+    private readonly buyNoChaseWindowMs = Math.max(0, getEnvInt("BUY_NO_CHASE_WINDOW_MS", 4000));
+    private readonly buyNoChaseMaxUpBps = Math.max(0, getEnvNumber("BUY_NO_CHASE_MAX_UP_BPS", 8));
+    private readonly exitLayeredEnabled = getEnvBool("EXIT_LAYERED_ENABLED", true);
+    private readonly exitAggressivePct = Math.max(0, Math.min(0.95, getEnvNumber("EXIT_AGGRESSIVE_PCT", 0.35)));
+    private readonly exitAggressiveTicks = Math.max(0, getEnvInt("EXIT_AGGRESSIVE_TICKS", 1));
+    private readonly exitFailsafeAfterFails = Math.max(1, getEnvInt("EXIT_FAILSAFE_AFTER_FAILS", 3));
+    private readonly exitFailsafeExtraTicks = Math.max(0, getEnvInt("EXIT_FAILSAFE_EXTRA_TICKS", 1));
+    private readonly maxLossPerMarketUsdc = Math.max(0, getEnvNumber("MAX_LOSS_PER_MARKET_USDC", 0));
     private readonly clobLedgerMinIntervalMs = Math.max(0, getEnvInt("CLOB_LEDGER_MIN_INTERVAL_MS", 100));
     private readonly forceFlattenEnabled = getEnvBool("FORCE_FLATTEN_ENABLED", true);
     private readonly forceFlattenBeforeEndSec = Math.max(0, getEnvInt("FORCE_FLATTEN_BEFORE_END_SEC", 40));
     private readonly forceFlattenAllowLoss = getEnvBool("FORCE_FLATTEN_ALLOW_LOSS", false);
+    private readonly forceFlattenMode: "protect_price" | "guarantee_flat" = (
+        String(process.env.FORCE_FLATTEN_MODE ?? "protect_price").trim().toLowerCase() === "guarantee_flat"
+            ? "guarantee_flat"
+            : "protect_price"
+    );
+    private readonly venueMinOrderSize = Math.max(5, getEnvNumber("VENUE_MIN_ORDER_SIZE", 5));
 
     private readonly books = new Map<string, TopOfBook>();
     private readonly state: QuoteState = {
@@ -222,6 +241,10 @@ export class TradeEngine {
         buyOrdersPlaced: 0,
         sellOrdersPlaced: 0,
         fills: 0,
+        entryCount: 0,
+        completedRoundTrips: 0,
+        winningRoundTrips: 0,
+        losingRoundTrips: 0,
     };
 
     private statusTimer: NodeJS.Timeout | null = null;
@@ -251,6 +274,13 @@ export class TradeEngine {
     private spotUpdatedAt: number | null = null;
     private spotConnected = false;
     private lagRegime: -1 | 0 | 1 = 0;
+    private fairHistory: Array<{ at: number; fairYes: number }> = [];
+    private lastLagBpsDecision: number | null = null;
+    private activePositionOpenedAt: number | null = null;
+    private realizedPnlAtPositionOpen = 0;
+    private holdMsAccumulated = 0;
+    private sumEntryLagBps = 0;
+    private consecutiveExitFailures = 0;
 
     constructor(opts: EngineOpts) {
         this.marketId = opts.marketId;
@@ -516,7 +546,8 @@ export class TradeEngine {
     private normalizeOrderSize(size: number, price: number, isBuy: boolean): number {
         if (!Number.isFinite(size) || size <= 0) return 0;
         const normalized = Math.floor(size * 100) / 100;
-        if (normalized < this.minOrderSize) return 0;
+        const minSize = Math.max(this.minOrderSize, this.venueMinOrderSize);
+        if (normalized < minSize) return 0;
         if (isBuy && normalized * price < this.minBuyNotionalUsdc) return 0;
         return normalized;
     }
@@ -529,6 +560,7 @@ export class TradeEngine {
 
         const secondsSinceStart = this.secondsSinceMarketStart();
         const buyWindowActive = secondsSinceStart !== null && secondsSinceStart >= 0 && secondsSinceStart <= this.buyWindowSec;
+        this.pushFairSample(fairYes);
 
         const secondsToEnd = this.secondsToMarketEnd();
         if (
@@ -593,6 +625,7 @@ export class TradeEngine {
         }
 
         const lag = this.computeLagDecision(fairYes, secondsToEnd);
+        this.lastLagBpsDecision = lag.lagBps;
         const next = this.quoteFromFair(fairYes, lag.lagSkew);
         const immediateExit = this.priceRiseExitSignal().active || this.takeProfitSignal().active;
         if (!immediateExit && !this.shouldRequote(next.bid, next.ask)) return;
@@ -611,17 +644,36 @@ export class TradeEngine {
             const bullishTracker = lag.lagMode === "bullish_yes";
             const risingPriceExit = this.priceRiseExitSignal();
             const exitSignal = risingPriceExit.active ? risingPriceExit : profitableExit;
+            const noChase = this.buyNoChaseSignal(fairYes);
+            const lagStrongEnough = lag.lagBps !== null && lag.lagBps >= this.buyMinLagBps;
+            const maxLossBreached = this.maxLossPerMarketUsdc > 0
+                && (this.realizedPnlYes + this.unrealizedPnlYes()) <= -this.maxLossPerMarketUsdc;
             let effectiveBid = next.bid;
             let effectiveAsk = next.ask;
             let dustRecoveryShortSell = false;
+            let buyGateReason: string | null = null;
 
             if (!bullishTracker) {
                 // Directional mode: only buy when BTC tracker leads Polymarket.
                 buySize = 0;
+                buyGateReason = "lag_not_bullish";
             }
             if (!buyWindowActive) {
                 // Allow exits all market, but only open new buys inside BUY_WINDOW_SEC.
                 buySize = 0;
+                buyGateReason = "outside_buy_window";
+            }
+            if (!lagStrongEnough) {
+                buySize = 0;
+                buyGateReason = "lag_below_buy_min_lag_bps";
+            }
+            if (noChase.active) {
+                buySize = 0;
+                buyGateReason = noChase.reason;
+            }
+            if (maxLossBreached) {
+                buySize = 0;
+                buyGateReason = "max_loss_per_market_breached";
             }
 
             // Directional mode: do not place passive sells while waiting for price-rise exit.
@@ -630,6 +682,17 @@ export class TradeEngine {
             if (exitSignal.active) {
                 buySize = 0;
                 effectiveAsk = exitSignal.exitPrice;
+                const failsafeActive = this.consecutiveExitFailures >= this.exitFailsafeAfterFails;
+                if (failsafeActive && this.exitFailsafeExtraTicks > 0) {
+                    const reduced = clampToTickBounds(
+                        roundDownToTick(
+                            effectiveAsk - (this.exitFailsafeExtraTicks * this.tickSize),
+                            this.tickSize,
+                        ),
+                        this.tickSize,
+                    );
+                    effectiveAsk = reduced;
+                }
                 // On take-profit, prioritize flattening inventory quickly.
                 sellSize = Math.max(0, currentPos);
                 // Dust recovery: if inventory is positive but below venue min size,
@@ -677,6 +740,8 @@ export class TradeEngine {
                         orderSize: this.orderSize,
                         buySize,
                         sellSize,
+                        buyGateReason,
+                        noChaseJumpBps: noChase.jumpBps,
                         tradingEnabled: this.tradingEnabled,
                         inventory: this.state.currentYesPosition,
                         takeProfitEnabled: this.takeProfitEnabled,
@@ -730,22 +795,68 @@ export class TradeEngine {
                         }
                     }
                 } else {
-                    buySkippedReason = "size_below_constraints_or_risk_cap";
+                    buySkippedReason = buyGateReason ?? "size_below_constraints_or_risk_cap";
                 }
 
                 if (sellSize > 0) {
-                    await this.clobClient.createAndPostOrder(
-                        {
-                            tokenID: this.yesTokenId,
-                            side: Side.SELL,
-                            size: sellSize,
-                            price: effectiveAsk,
-                        },
-                        { tickSize: String(this.tickSize) as any },
-                        OrderType.GTC,
-                    );
-                    sellPlaced = true;
-                    this.state.sellOrdersPlaced += 1;
+                    if (exitSignal.active && this.exitLayeredEnabled && sellSize >= (this.minOrderSize * 2)) {
+                        const aggressiveRawPrice = clampToTickBounds(
+                            effectiveAsk - (this.exitAggressiveTicks * this.tickSize),
+                            this.tickSize,
+                        );
+                        const aggressivePrice = clampToTickBounds(roundDownToTick(aggressiveRawPrice, this.tickSize), this.tickSize);
+                        let aggressiveSize = this.normalizeOrderSize(sellSize * this.exitAggressivePct, aggressivePrice, false);
+                        if (aggressiveSize > sellSize) aggressiveSize = sellSize;
+                        let passiveSize = this.normalizeOrderSize(sellSize - aggressiveSize, effectiveAsk, false);
+                        if (aggressiveSize <= 0 || passiveSize <= 0) {
+                            aggressiveSize = 0;
+                            passiveSize = sellSize;
+                        }
+
+                        if (aggressiveSize > 0) {
+                            await this.clobClient.createAndPostOrder(
+                                {
+                                    tokenID: this.yesTokenId,
+                                    side: Side.SELL,
+                                    size: aggressiveSize,
+                                    price: aggressivePrice,
+                                },
+                                { tickSize: String(this.tickSize) as any },
+                                OrderType.GTC,
+                            );
+                            sellPlaced = true;
+                            this.state.sellOrdersPlaced += 1;
+                        }
+
+                        if (passiveSize > 0) {
+                            await this.clobClient.createAndPostOrder(
+                                {
+                                    tokenID: this.yesTokenId,
+                                    side: Side.SELL,
+                                    size: passiveSize,
+                                    price: effectiveAsk,
+                                },
+                                { tickSize: String(this.tickSize) as any },
+                                OrderType.GTC,
+                            );
+                            sellPlaced = true;
+                            this.state.sellOrdersPlaced += 1;
+                        }
+                    } else {
+                        await this.clobClient.createAndPostOrder(
+                            {
+                                tokenID: this.yesTokenId,
+                                side: Side.SELL,
+                                size: sellSize,
+                                price: effectiveAsk,
+                            },
+                            { tickSize: String(this.tickSize) as any },
+                            OrderType.GTC,
+                        );
+                        sellPlaced = true;
+                        this.state.sellOrdersPlaced += 1;
+                    }
+                    if (exitSignal.active) this.consecutiveExitFailures = 0;
                 } else {
                     if (exitSignal.active && currentPos > 0 && currentPos < this.minOrderSize) {
                         sellSkippedReason = "tp_inventory_below_min_order_size";
@@ -753,6 +864,9 @@ export class TradeEngine {
                         sellSkippedReason = "waiting_for_price_rise_exit";
                     } else {
                         sellSkippedReason = "insufficient_yes_inventory";
+                    }
+                    if (exitSignal.active && currentPos > 0) {
+                        this.consecutiveExitFailures += 1;
                     }
                 }
 
@@ -783,6 +897,10 @@ export class TradeEngine {
                         orderSize: this.orderSize,
                         buySize,
                         sellSize,
+                        buyGateReason,
+                        noChaseJumpBps: noChase.jumpBps,
+                        consecutiveExitFailures: this.consecutiveExitFailures,
+                        exitFailsafeAfterFails: this.exitFailsafeAfterFails,
                         inventory: this.state.currentYesPosition,
                         buyPlaced,
                         sellPlaced,
@@ -802,6 +920,7 @@ export class TradeEngine {
             this.state.lastQuoteAt = Date.now();
         } catch (err) {
             this.state.orderErrors += 1;
+            if (immediateExit) this.consecutiveExitFailures += 1;
             logger.error({ err }, "Quote cycle failed");
         } finally {
             this.inFlight = false;
@@ -960,6 +1079,12 @@ export class TradeEngine {
         if (side === "BUY") {
             const pos = this.state.currentYesPosition;
             const nextPos = pos + size;
+            if (pos <= 0 && nextPos > 0) {
+                this.state.entryCount += 1;
+                this.activePositionOpenedAt = Date.now();
+                this.realizedPnlAtPositionOpen = this.realizedPnlYes;
+                if (this.lastLagBpsDecision !== null) this.sumEntryLagBps += this.lastLagBpsDecision;
+            }
             if (nextPos > 0) {
                 this.avgEntryPriceYes = ((this.avgEntryPriceYes * pos) + (price * size)) / nextPos;
             }
@@ -975,7 +1100,18 @@ export class TradeEngine {
         const nextPos = pos - size;
         this.state.currentYesPosition = nextPos;
         if (nextPos <= 0) {
+            if (pos > 0) {
+                this.state.completedRoundTrips += 1;
+                const cycleRealized = this.realizedPnlYes - this.realizedPnlAtPositionOpen;
+                if (cycleRealized > 0) this.state.winningRoundTrips += 1;
+                else if (cycleRealized < 0) this.state.losingRoundTrips += 1;
+                if (this.activePositionOpenedAt) {
+                    this.holdMsAccumulated += Math.max(0, Date.now() - this.activePositionOpenedAt);
+                }
+            }
             this.avgEntryPriceYes = 0;
+            this.activePositionOpenedAt = null;
+            this.realizedPnlAtPositionOpen = this.realizedPnlYes;
         }
     }
 
@@ -1013,6 +1149,38 @@ export class TradeEngine {
         return { active: true, exitPrice, reason: "price_risen_after_bullish_tracker" };
     }
 
+    private pushFairSample(fairYes: number) {
+        const now = Date.now();
+        this.fairHistory.push({ at: now, fairYes });
+        const keepMs = Math.max(this.buyNoChaseWindowMs * 2, 15000);
+        const cutoff = now - keepMs;
+        while (this.fairHistory.length > 0 && this.fairHistory[0].at < cutoff) {
+            this.fairHistory.shift();
+        }
+        if (this.fairHistory.length > 300) {
+            this.fairHistory = this.fairHistory.slice(-300);
+        }
+    }
+
+    private buyNoChaseSignal(fairYes: number): { active: boolean; jumpBps: number | null; reason: string } {
+        if (this.buyNoChaseWindowMs <= 0 || this.buyNoChaseMaxUpBps <= 0) {
+            return { active: false, jumpBps: null, reason: "disabled" };
+        }
+        const now = Date.now();
+        const cutoff = now - this.buyNoChaseWindowMs;
+        const window = this.fairHistory.filter((x) => x.at >= cutoff);
+        if (window.length < 2) return { active: false, jumpBps: null, reason: "insufficient_history" };
+        let minFair = window[0].fairYes;
+        for (const p of window) {
+            if (p.fairYes < minFair) minFair = p.fairYes;
+        }
+        const jumpBps = (fairYes - minFair) * 10000;
+        if (jumpBps > this.buyNoChaseMaxUpBps) {
+            return { active: true, jumpBps, reason: "no_chase_recent_up_move" };
+        }
+        return { active: false, jumpBps, reason: "ok" };
+    }
+
     private async forceFlattenNearEnd(fairYes: number, secondsToEnd: number) {
         const currentPos = this.state.currentYesPosition;
         if (currentPos <= 0) return;
@@ -1023,7 +1191,8 @@ export class TradeEngine {
 
         const candidateExit = clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
         const breakEven = this.avgEntryPriceYes > 0 ? this.avgEntryPriceYes : null;
-        if (!this.forceFlattenAllowLoss && breakEven !== null && candidateExit < breakEven) {
+        const protectPrice = this.forceFlattenMode === "protect_price" && !this.forceFlattenAllowLoss;
+        if (protectPrice && breakEven !== null && candidateExit < breakEven) {
             const now = Date.now();
             if (now - this.lastForceFlattenLogAt > 3000) {
                 logger.warn(
@@ -1069,6 +1238,7 @@ export class TradeEngine {
                     avgEntryPriceYes: this.avgEntryPriceYes,
                     exitPrice: candidateExit,
                     sellSize,
+                    forceFlattenMode: this.forceFlattenMode,
                     mode: this.tradingEnabled ? "dry_run" : "trading_disabled",
                     dustRecoveryShortSell,
                 },
@@ -1104,6 +1274,7 @@ export class TradeEngine {
                 avgEntryPriceYes: this.avgEntryPriceYes,
                 exitPrice: candidateExit,
                 sellSize,
+                forceFlattenMode: this.forceFlattenMode,
                 forceFlattenAllowLoss: this.forceFlattenAllowLoss,
                 dustRecoveryShortSell,
             },
@@ -1125,10 +1296,11 @@ export class TradeEngine {
         const candidateExit = bestBid === null
             ? null
             : clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
+        const protectPrice = this.forceFlattenMode === "protect_price" && !this.forceFlattenAllowLoss;
         const blockedByNoLoss = (
             inWindow
             && hasInventory
-            && !this.forceFlattenAllowLoss
+            && protectPrice
             && candidateExit !== null
             && this.avgEntryPriceYes > 0
             && candidateExit < this.avgEntryPriceYes
@@ -1147,6 +1319,7 @@ export class TradeEngine {
         return {
             enabled: this.forceFlattenEnabled,
             allowLoss: this.forceFlattenAllowLoss,
+            mode: this.forceFlattenMode,
             beforeEndSec: this.forceFlattenBeforeEndSec,
             noNewOrdersBeforeEndSec: this.noNewOrdersBeforeEndSec,
             cancelAllBeforeEndSec: this.cancelAllBeforeEndSec,
@@ -1231,6 +1404,10 @@ export class TradeEngine {
                 buyOrdersPlaced: this.state.buyOrdersPlaced,
                 sellOrdersPlaced: this.state.sellOrdersPlaced,
                 fills: this.state.fills,
+                entryCount: this.state.entryCount,
+                completedRoundTrips: this.state.completedRoundTrips,
+                winningRoundTrips: this.state.winningRoundTrips,
+                losingRoundTrips: this.state.losingRoundTrips,
             },
             pnl: {
                 realizedYes: Number(this.realizedPnlYes.toFixed(4)),
@@ -1238,6 +1415,15 @@ export class TradeEngine {
                 netYes: Number((this.realizedPnlYes + this.unrealizedPnlYes()).toFixed(4)),
                 avgEntryPriceYes: Number(this.avgEntryPriceYes.toFixed(6)),
                 inventoryNotionalUsdc: Number(this.inventoryNotionalUsdc().toFixed(4)),
+                avgEntryLagBps: this.state.entryCount > 0
+                    ? Number((this.sumEntryLagBps / this.state.entryCount).toFixed(2))
+                    : 0,
+                avgHoldSec: this.state.completedRoundTrips > 0
+                    ? Number(((this.holdMsAccumulated / this.state.completedRoundTrips) / 1000).toFixed(2))
+                    : 0,
+                currentHoldSec: this.activePositionOpenedAt
+                    ? Number(((Date.now() - this.activePositionOpenedAt) / 1000).toFixed(2))
+                    : 0,
                 lastFill: this.lastFill,
             },
             collateral: {
