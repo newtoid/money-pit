@@ -184,7 +184,7 @@ export class TradeEngine {
     private readonly noTokenId: string;
     private readonly clobClient: ClobClient | null;
     private readonly dryRun: boolean;
-    private readonly tradingEnabled: boolean;
+    private readonly configuredTradingEnabled: boolean;
 
     private readonly tickSize = getEnvNumber("TICK_SIZE", 0.01);
     private readonly halfSpread = getEnvNumber("HALF_SPREAD", 0.01);
@@ -215,6 +215,9 @@ export class TradeEngine {
     private readonly signalK = Math.max(1, getEnvNumber("SIGNAL_K", 60));
     private readonly buyWindowSec = Math.max(0, getEnvInt("BUY_WINDOW_SEC", 180));
     private readonly buyMinLagBps = Math.max(0, getEnvNumber("BUY_MIN_LAG_BPS", 6));
+    private readonly entryEstimatedRoundTripCostBps = Math.max(0, getEnvNumber("ENTRY_ESTIMATED_ROUNDTRIP_COST_BPS", 12));
+    private readonly entryExtraEdgeBufferBps = Math.max(0, getEnvNumber("ENTRY_EXTRA_EDGE_BUFFER_BPS", 2));
+    private readonly entryMaxYesSpreadBps = Math.max(0, getEnvNumber("ENTRY_MAX_YES_SPREAD_BPS", 80));
     private readonly buyNoChaseWindowMs = Math.max(0, getEnvInt("BUY_NO_CHASE_WINDOW_MS", 4000));
     private readonly buyNoChaseMaxUpBps = Math.max(0, getEnvNumber("BUY_NO_CHASE_MAX_UP_BPS", 8));
     private readonly exitLayeredEnabled = getEnvBool("EXIT_LAYERED_ENABLED", true);
@@ -238,6 +241,13 @@ export class TradeEngine {
     private readonly tradeWindowEnabled = getEnvBool("TRADE_WINDOW_ENABLED", true);
     private readonly tradeWindowStartGmtMin = parseHhMmToMinutes(process.env.TRADE_WINDOW_START_GMT ?? "08:30", (8 * 60) + 30);
     private readonly tradeWindowEndGmtMin = parseHhMmToMinutes(process.env.TRADE_WINDOW_END_GMT ?? "10:30", (10 * 60) + 30);
+    private readonly sessionMaxConsecutiveLosses = Math.max(0, getEnvInt("SESSION_MAX_CONSECUTIVE_LOSSES", 3));
+    private readonly sessionMaxNetLossUsdc = Math.max(0, getEnvNumber("SESSION_MAX_NET_LOSS_USDC", 10));
+    private readonly estimatedFeeBps = Math.max(0, getEnvNumber("ESTIMATED_FEE_BPS", 100));
+    private readonly rollingExpectancyWindow = Math.max(1, getEnvInt("ROLLING_EXPECTANCY_WINDOW", 20));
+    private readonly rollingExpectancyPauseBelowUsdc = getEnvNumber("ROLLING_EXPECTANCY_PAUSE_BELOW_USDC", -0.05);
+    private readonly rollingExpectancyReduceSizeBelowUsdc = getEnvNumber("ROLLING_EXPECTANCY_REDUCE_SIZE_BELOW_USDC", 0);
+    private readonly rollingExpectancyReduceSizeMult = Math.max(0.1, Math.min(1, getEnvNumber("ROLLING_EXPECTANCY_REDUCE_SIZE_MULT", 0.5)));
     private readonly venueMinOrderSize = Math.max(5, getEnvNumber("VENUE_MIN_ORDER_SIZE", 5));
 
     private readonly books = new Map<string, TopOfBook>();
@@ -282,7 +292,7 @@ export class TradeEngine {
     private lastAllowanceSyncAttemptAt = 0;
     private lastPositionPollErrorAt = 0;
     private lastCancelAllAt = 0;
-    private lastWindowCancelAt = 0;
+    private lastWindowBuyCancelAt = 0;
     private lastWindowBlockLogAt = 0;
     private lastOpenOrdersFetchAt = 0;
     private lastForceFlattenLogAt = 0;
@@ -300,6 +310,14 @@ export class TradeEngine {
     private holdMsAccumulated = 0;
     private sumEntryLagBps = 0;
     private consecutiveExitFailures = 0;
+    private consecutiveLosingRoundTrips = 0;
+    private sessionNetAfterFeesUsdc = 0;
+    private recentCycleNetAfterFeesUsdc: number[] = [];
+    private lastCycleNetAfterFeesUsdc: number | null = null;
+    private activeCycleBuyNotionalUsdc = 0;
+    private activeCycleSellNotionalUsdc = 0;
+    private runtimeTradingEnabled: boolean;
+    private tradeWindowOverride = false;
 
     constructor(opts: EngineOpts) {
         this.marketId = opts.marketId;
@@ -308,10 +326,26 @@ export class TradeEngine {
         this.noTokenId = this.tokenIds[1] ?? "";
         this.clobClient = opts.clobClient;
         this.dryRun = opts.dryRun;
-        this.tradingEnabled = opts.tradingEnabled;
+        this.configuredTradingEnabled = opts.tradingEnabled;
+        this.runtimeTradingEnabled = opts.tradingEnabled;
         this.marketStartUnixSec = opts.marketStartUnixSec ?? null;
         this.marketEndUnixSec = opts.marketEndUnixSec ?? null;
         this.makerAddress = this.resolveMakerAddress();
+    }
+
+    setTradingEnabled(enabled: boolean) {
+        this.runtimeTradingEnabled = enabled;
+        if (!enabled) {
+            void this.cancelAllYesOrders().catch((err) => {
+                logger.warn({ err, marketId: this.marketId }, "Cancel-all on trading disable failed");
+            });
+        }
+        void this.maybeQuote();
+    }
+
+    setTradeWindowOverride(enabled: boolean) {
+        this.tradeWindowOverride = enabled;
+        void this.maybeQuote();
     }
 
     start() {
@@ -565,6 +599,7 @@ export class TradeEngine {
     }
 
     private isInGmtTradeWindow(now = new Date()): boolean {
+        if (this.tradeWindowOverride) return true;
         if (!this.tradeWindowEnabled) return true;
         const currentMin = (now.getUTCHours() * 60) + now.getUTCMinutes();
         const start = this.tradeWindowStartGmtMin;
@@ -573,6 +608,39 @@ export class TradeEngine {
             return currentMin >= start && currentMin <= end;
         }
         return currentMin >= start || currentMin <= end;
+    }
+
+    private currentYesSpreadBps(): number | null {
+        const yes = this.books.get(this.yesTokenId);
+        if (!yes || yes.bid === null || yes.ask === null) return null;
+        const mid = (yes.bid + yes.ask) / 2;
+        if (!Number.isFinite(mid) || mid <= 0) return null;
+        const spread = yes.ask - yes.bid;
+        if (!Number.isFinite(spread) || spread < 0) return null;
+        return (spread / mid) * 10000;
+    }
+
+    private rollingAvgCycleNetAfterFeesUsdc(): number | null {
+        if (this.recentCycleNetAfterFeesUsdc.length === 0) return null;
+        const sum = this.recentCycleNetAfterFeesUsdc.reduce((acc, x) => acc + x, 0);
+        return sum / this.recentCycleNetAfterFeesUsdc.length;
+    }
+
+    private entryRiskMode(): { pauseBuys: boolean; sizeMult: number; reason: string | null; rollingAvg: number | null } {
+        if (this.sessionMaxConsecutiveLosses > 0 && this.consecutiveLosingRoundTrips >= this.sessionMaxConsecutiveLosses) {
+            return { pauseBuys: true, sizeMult: 0, reason: "session_consecutive_losses_cap", rollingAvg: this.rollingAvgCycleNetAfterFeesUsdc() };
+        }
+        if (this.sessionMaxNetLossUsdc > 0 && this.sessionNetAfterFeesUsdc <= -this.sessionMaxNetLossUsdc) {
+            return { pauseBuys: true, sizeMult: 0, reason: "session_net_loss_cap", rollingAvg: this.rollingAvgCycleNetAfterFeesUsdc() };
+        }
+        const rollingAvg = this.rollingAvgCycleNetAfterFeesUsdc();
+        if (rollingAvg !== null && rollingAvg <= this.rollingExpectancyPauseBelowUsdc) {
+            return { pauseBuys: true, sizeMult: 0, reason: "rolling_expectancy_pause", rollingAvg };
+        }
+        if (rollingAvg !== null && rollingAvg <= this.rollingExpectancyReduceSizeBelowUsdc) {
+            return { pauseBuys: false, sizeMult: this.rollingExpectancyReduceSizeMult, reason: "rolling_expectancy_reduce_size", rollingAvg };
+        }
+        return { pauseBuys: false, sizeMult: 1, reason: null, rollingAvg };
     }
 
     private normalizeOrderSize(size: number, price: number, isBuy: boolean): number {
@@ -592,20 +660,12 @@ export class TradeEngine {
 
         const secondsSinceStart = this.secondsSinceMarketStart();
         const buyWindowActive = secondsSinceStart !== null && secondsSinceStart >= 0 && secondsSinceStart <= this.buyWindowSec;
+        const clockWindowActive = this.isInGmtTradeWindow();
         this.pushFairSample(fairYes);
 
         const secondsToEnd = this.secondsToMarketEnd();
-        if (!this.isInGmtTradeWindow()) {
+        if (!clockWindowActive) {
             const now = Date.now();
-            if (now - this.lastWindowCancelAt >= 5000) {
-                this.lastWindowCancelAt = now;
-                try {
-                    await this.cancelAllYesOrders();
-                } catch (err) {
-                    this.state.orderErrors += 1;
-                    logger.error({ err, marketId: this.marketId }, "Cancel-all outside GMT trade window failed");
-                }
-            }
             if (now - this.lastWindowBlockLogAt >= 30000) {
                 this.lastWindowBlockLogAt = now;
                 logger.info(
@@ -614,10 +674,9 @@ export class TradeEngine {
                         startGmt: process.env.TRADE_WINDOW_START_GMT ?? "08:30",
                         endGmt: process.env.TRADE_WINDOW_END_GMT ?? "10:30",
                     },
-                    "Trading blocked outside GMT window",
+                    "Buy orders blocked outside GMT window (sell exits still allowed)",
                 );
             }
-            return;
         }
 
         if (
@@ -673,28 +732,39 @@ export class TradeEngine {
             return;
         }
 
-        if (
+        const noNewOrdersWindowActive = (
             secondsToEnd !== null
             && this.noNewOrdersBeforeEndSec > 0
             && secondsToEnd <= this.noNewOrdersBeforeEndSec
-        ) {
-            return;
-        }
+        );
 
         const lag = this.computeLagDecision(fairYes, secondsToEnd);
         this.lastLagBpsDecision = lag.lagBps;
         const next = this.quoteFromFair(fairYes, lag.lagSkew);
         const immediateExit = this.priceRiseExitSignal().active || this.takeProfitSignal().active;
+        if (!clockWindowActive) {
+            const now = Date.now();
+            if (now - this.lastWindowBuyCancelAt >= 5000) {
+                this.lastWindowBuyCancelAt = now;
+                try {
+                    await this.cancelAllYesBuyOrders();
+                } catch (err) {
+                    this.state.orderErrors += 1;
+                    logger.error({ err, marketId: this.marketId }, "Cancel-all BUY orders outside GMT buy window failed");
+                }
+            }
+        }
         if (!immediateExit && !this.shouldRequote(next.bid, next.ask)) return;
 
         this.inFlight = true;
         try {
             const currentPos = this.state.currentYesPosition;
+            const riskMode = this.entryRiskMode();
             const remainingByPosition = Math.max(0, this.maxPosition - currentPos);
             const remainingNotional = Math.max(0, this.maxInventoryNotionalUsdc - this.inventoryNotionalUsdc());
             const remainingByNotional = next.bid > 0 ? remainingNotional / next.bid : 0;
 
-            let buySize = Math.max(0, Math.min(this.orderSize * lag.buyMult, remainingByPosition, remainingByNotional));
+            let buySize = Math.max(0, Math.min(this.orderSize * lag.buyMult * riskMode.sizeMult, remainingByPosition, remainingByNotional));
             let sellSize = 0;
 
             const profitableExit = this.takeProfitSignal();
@@ -702,9 +772,12 @@ export class TradeEngine {
             const risingPriceExit = this.priceRiseExitSignal();
             const exitSignal = risingPriceExit.active ? risingPriceExit : profitableExit;
             const noChase = this.buyNoChaseSignal(fairYes);
-            const lagStrongEnough = lag.lagBps !== null && lag.lagBps >= this.buyMinLagBps;
+            const requiredLagBps = this.buyMinLagBps + this.entryEstimatedRoundTripCostBps + this.entryExtraEdgeBufferBps;
+            const lagStrongEnough = lag.lagBps !== null && lag.lagBps >= requiredLagBps;
             const maxLossBreached = this.maxLossPerMarketUsdc > 0
                 && (this.realizedPnlYes + this.unrealizedPnlYes()) <= -this.maxLossPerMarketUsdc;
+            const yesSpreadBps = this.currentYesSpreadBps();
+            const spreadTooWide = yesSpreadBps !== null && yesSpreadBps > this.entryMaxYesSpreadBps;
             let effectiveBid = next.bid;
             let effectiveAsk = next.ask;
             let dustRecoveryShortSell = false;
@@ -720,9 +793,21 @@ export class TradeEngine {
                 buySize = 0;
                 buyGateReason = "outside_buy_window";
             }
+            if (noNewOrdersWindowActive) {
+                buySize = 0;
+                buyGateReason = "inside_no_new_orders_window";
+            }
+            if (!clockWindowActive) {
+                buySize = 0;
+                buyGateReason = "outside_gmt_buy_window";
+            }
             if (!lagStrongEnough) {
                 buySize = 0;
-                buyGateReason = "lag_below_buy_min_lag_bps";
+                buyGateReason = "lag_below_fee_adjusted_min";
+            }
+            if (spreadTooWide) {
+                buySize = 0;
+                buyGateReason = "spread_too_wide_for_entry";
             }
             if (noChase.active) {
                 buySize = 0;
@@ -731,6 +816,10 @@ export class TradeEngine {
             if (maxLossBreached) {
                 buySize = 0;
                 buyGateReason = "max_loss_per_market_breached";
+            }
+            if (riskMode.pauseBuys) {
+                buySize = 0;
+                buyGateReason = riskMode.reason;
             }
 
             if (exitSignal.active) {
@@ -764,7 +853,7 @@ export class TradeEngine {
             buySize = this.normalizeOrderSize(buySize, effectiveBid, true);
             sellSize = this.normalizeOrderSize(sellSize, effectiveAsk, false);
 
-            if (this.dryRun || !this.tradingEnabled || !this.clobClient) {
+            if (this.dryRun || !this.runtimeTradingEnabled || !this.clobClient) {
                 this.lastQuote = {
                     at: Date.now(),
                     fairYes,
@@ -790,18 +879,30 @@ export class TradeEngine {
                             skew: lag.lagSkew,
                             reason: lag.reason,
                         },
+                        feeAdjustedEntry: {
+                            requiredLagBps,
+                            estRoundTripCostBps: this.entryEstimatedRoundTripCostBps,
+                            extraEdgeBufferBps: this.entryExtraEdgeBufferBps,
+                            yesSpreadBps,
+                            maxYesSpreadBps: this.entryMaxYesSpreadBps,
+                        },
+                        riskMode: {
+                            reason: riskMode.reason,
+                            rollingAvgCycleNetAfterFeesUsdc: riskMode.rollingAvg,
+                            sizeMult: riskMode.sizeMult,
+                        },
                         orderSize: this.orderSize,
                         buySize,
                         sellSize,
                         buyGateReason,
                         noChaseJumpBps: noChase.jumpBps,
-                        tradingEnabled: this.tradingEnabled,
+                        tradingEnabled: this.runtimeTradingEnabled,
                         inventory: this.state.currentYesPosition,
                         takeProfitEnabled: this.takeProfitEnabled,
                         takeProfitActive: exitSignal.active,
                         takeProfitReason: exitSignal.reason,
                     },
-                    this.tradingEnabled ? "DRY_RUN quote decision" : "TRADING_DISABLED quote decision",
+                    this.runtimeTradingEnabled ? "DRY_RUN quote decision" : "TRADING_DISABLED quote decision",
                 );
             } else {
                 await this.cancelAllYesOrders();
@@ -947,6 +1048,18 @@ export class TradeEngine {
                             skew: lag.lagSkew,
                             reason: lag.reason,
                         },
+                        feeAdjustedEntry: {
+                            requiredLagBps,
+                            estRoundTripCostBps: this.entryEstimatedRoundTripCostBps,
+                            extraEdgeBufferBps: this.entryExtraEdgeBufferBps,
+                            yesSpreadBps,
+                            maxYesSpreadBps: this.entryMaxYesSpreadBps,
+                        },
+                        riskMode: {
+                            reason: riskMode.reason,
+                            rollingAvgCycleNetAfterFeesUsdc: riskMode.rollingAvg,
+                            sizeMult: riskMode.sizeMult,
+                        },
                         orderSize: this.orderSize,
                         buySize,
                         sellSize,
@@ -1043,7 +1156,6 @@ export class TradeEngine {
     }
 
     private async refreshPositionFromDataApi() {
-        if (!this.tradingEnabled) return;
         if (!this.makerAddress || !this.yesTokenId) return;
         try {
             const url = `https://data-api.polymarket.com/positions?user=${encodeURIComponent(this.makerAddress)}&sizeThreshold=0`;
@@ -1143,6 +1255,7 @@ export class TradeEngine {
         this.lastFill = { at: Date.now(), tokenId: this.yesTokenId, side, size, price };
 
         if (side === "BUY") {
+            this.activeCycleBuyNotionalUsdc += (size * price);
             const pos = this.state.currentYesPosition;
             const nextPos = pos + size;
             if (pos <= 0 && nextPos > 0) {
@@ -1167,6 +1280,7 @@ export class TradeEngine {
         }
 
         const pos = this.state.currentYesPosition;
+        this.activeCycleSellNotionalUsdc += (size * price);
         const closed = Math.min(Math.max(pos, 0), size);
         if (closed > 0) {
             this.realizedPnlYes += (price - this.avgEntryPriceYes) * closed;
@@ -1177,14 +1291,22 @@ export class TradeEngine {
             if (pos > 0) {
                 this.state.completedRoundTrips += 1;
                 const cycleRealized = this.realizedPnlYes - this.realizedPnlAtPositionOpen;
+                const cycleTurnover = this.activeCycleBuyNotionalUsdc + this.activeCycleSellNotionalUsdc;
+                const cycleEstimatedFees = cycleTurnover * (this.estimatedFeeBps / 10000);
+                const cycleNetAfterFees = cycleRealized - cycleEstimatedFees;
+                this.pushCycleNetAfterFees(cycleNetAfterFees);
                 if (cycleRealized > 0) this.state.winningRoundTrips += 1;
                 else if (cycleRealized < 0) this.state.losingRoundTrips += 1;
+                if (cycleNetAfterFees < 0) this.consecutiveLosingRoundTrips += 1;
+                else this.consecutiveLosingRoundTrips = 0;
                 if (this.activePositionOpenedAt) {
                     this.holdMsAccumulated += Math.max(0, Date.now() - this.activePositionOpenedAt);
                 }
             }
             this.avgEntryPriceYes = 0;
             this.entrySpotMoveTargetBps = null;
+            this.activeCycleBuyNotionalUsdc = 0;
+            this.activeCycleSellNotionalUsdc = 0;
             this.activePositionOpenedAt = null;
             this.realizedPnlAtPositionOpen = this.realizedPnlYes;
         }
@@ -1321,7 +1443,7 @@ export class TradeEngine {
         sellSize = this.normalizeOrderSize(sellSize, candidateExit, false);
         if (sellSize <= 0) return;
 
-        if (this.dryRun || !this.tradingEnabled || !this.clobClient) {
+        if (this.dryRun || !this.runtimeTradingEnabled || !this.clobClient) {
             logger.info(
                 {
                     marketId: this.marketId,
@@ -1333,7 +1455,7 @@ export class TradeEngine {
                     exitPrice: candidateExit,
                     sellSize,
                     forceFlattenMode: this.forceFlattenMode,
-                    mode: this.tradingEnabled ? "dry_run" : "trading_disabled",
+                    mode: this.runtimeTradingEnabled ? "dry_run" : "trading_disabled",
                     dustRecoveryShortSell,
                 },
                 "Force flatten near market end (simulation)",
@@ -1440,33 +1562,68 @@ export class TradeEngine {
         return Math.floor(Date.now() / 1000 - this.marketStartUnixSec);
     }
 
-    private async cancelAllYesOrders() {
-        if (!this.clobClient) return;
+    private parseOpenOrderRows(open: unknown): any[] {
+        return Array.isArray(open) ? open
+            : Array.isArray((open as any)?.data) ? (open as any).data
+                : Array.isArray((open as any)?.orders) ? (open as any).orders
+                    : [];
+    }
+
+    private orderIdFromRow(o: any): string {
+        return String(o?.id ?? o?.orderID ?? o?.order_id ?? "");
+    }
+
+    private orderSideFromRow(o: any): string {
+        return String(o?.side ?? o?.order?.side ?? "").toUpperCase();
+    }
+
+    private async fetchOpenYesOrdersRows(): Promise<any[]> {
+        if (!this.clobClient) return [];
         const now = Date.now();
         if (this.clobLedgerMinIntervalMs > 0 && now - this.lastOpenOrdersFetchAt < this.clobLedgerMinIntervalMs) {
-            return;
+            return [];
         }
         this.lastOpenOrdersFetchAt = now;
 
-        let open: unknown;
         try {
-            open = await this.clobClient.getOpenOrders({ asset_id: this.yesTokenId });
+            const open = await this.clobClient.getOpenOrders({ asset_id: this.yesTokenId });
+            return this.parseOpenOrderRows(open);
         } catch (err) {
             logger.warn(
                 { err, marketId: this.marketId, yesTokenId: this.yesTokenId },
                 "getOpenOrders failed; skipping cancel-all for this cycle",
             );
-            return;
+            return [];
         }
+    }
 
-        const rows =
-            Array.isArray(open) ? open
-                : Array.isArray((open as any)?.data) ? (open as any).data
-                    : Array.isArray((open as any)?.orders) ? (open as any).orders
-                        : [];
-        const orderIds = rows.map((o: any) => String(o?.id ?? o?.orderID ?? o?.order_id ?? "")).filter(Boolean);
+    private async cancelAllYesOrders() {
+        if (!this.clobClient) return;
+        const rows = await this.fetchOpenYesOrdersRows();
+        const orderIds = rows.map((o: any) => this.orderIdFromRow(o)).filter(Boolean);
         if (orderIds.length > 0) {
             await this.clobClient.cancelOrders(orderIds);
+        }
+    }
+
+    private async cancelAllYesBuyOrders() {
+        if (!this.clobClient) return;
+        const rows = await this.fetchOpenYesOrdersRows();
+        const buyOrderIds = rows
+            .filter((o: any) => this.orderSideFromRow(o) === "BUY")
+            .map((o: any) => this.orderIdFromRow(o))
+            .filter(Boolean);
+        if (buyOrderIds.length > 0) {
+            await this.clobClient.cancelOrders(buyOrderIds);
+        }
+    }
+
+    private pushCycleNetAfterFees(cycleNetAfterFeesUsdc: number) {
+        this.lastCycleNetAfterFeesUsdc = cycleNetAfterFeesUsdc;
+        this.sessionNetAfterFeesUsdc += cycleNetAfterFeesUsdc;
+        this.recentCycleNetAfterFeesUsdc.push(cycleNetAfterFeesUsdc);
+        if (this.recentCycleNetAfterFeesUsdc.length > this.rollingExpectancyWindow) {
+            this.recentCycleNetAfterFeesUsdc = this.recentCycleNetAfterFeesUsdc.slice(-this.rollingExpectancyWindow);
         }
     }
 
@@ -1507,6 +1664,13 @@ export class TradeEngine {
                 realizedYes: Number(this.realizedPnlYes.toFixed(4)),
                 unrealizedYes: Number(this.unrealizedPnlYes().toFixed(4)),
                 netYes: Number((this.realizedPnlYes + this.unrealizedPnlYes()).toFixed(4)),
+                netAfterFeesSessionUsdc: Number(this.sessionNetAfterFeesUsdc.toFixed(4)),
+                rollingAvgCycleNetAfterFeesUsdc: this.rollingAvgCycleNetAfterFeesUsdc() !== null
+                    ? Number((this.rollingAvgCycleNetAfterFeesUsdc() as number).toFixed(4))
+                    : null,
+                lastCycleNetAfterFeesUsdc: this.lastCycleNetAfterFeesUsdc !== null
+                    ? Number(this.lastCycleNetAfterFeesUsdc.toFixed(4))
+                    : null,
                 avgEntryPriceYes: Number(this.avgEntryPriceYes.toFixed(6)),
                 inventoryNotionalUsdc: Number(this.inventoryNotionalUsdc().toFixed(4)),
                 avgEntryLagBps: this.state.entryCount > 0
@@ -1527,7 +1691,9 @@ export class TradeEngine {
                 lastError: this.collateral.lastError,
             },
             dryRun: this.dryRun,
-            tradingEnabled: this.tradingEnabled,
+            tradingEnabled: this.runtimeTradingEnabled,
+            configuredTradingEnabled: this.configuredTradingEnabled,
+            tradeWindowOverride: this.tradeWindowOverride,
             lagArb: {
                 enabled: this.lagArbEnabled,
                 regime: this.lagRegime,
@@ -1546,6 +1712,21 @@ export class TradeEngine {
                 startGmt: process.env.TRADE_WINDOW_START_GMT ?? "08:30",
                 endGmt: process.env.TRADE_WINDOW_END_GMT ?? "10:30",
                 active: this.isInGmtTradeWindow(),
+                override: this.tradeWindowOverride,
+            },
+            entryGuards: {
+                requiredLagBps: this.buyMinLagBps + this.entryEstimatedRoundTripCostBps + this.entryExtraEdgeBufferBps,
+                estRoundTripCostBps: this.entryEstimatedRoundTripCostBps,
+                extraEdgeBufferBps: this.entryExtraEdgeBufferBps,
+                maxYesSpreadBps: this.entryMaxYesSpreadBps,
+                sessionMaxConsecutiveLosses: this.sessionMaxConsecutiveLosses,
+                sessionMaxNetLossUsdc: this.sessionMaxNetLossUsdc,
+                rollingExpectancyWindow: this.rollingExpectancyWindow,
+                rollingExpectancyPauseBelowUsdc: this.rollingExpectancyPauseBelowUsdc,
+                rollingExpectancyReduceSizeBelowUsdc: this.rollingExpectancyReduceSizeBelowUsdc,
+                rollingExpectancyReduceSizeMult: this.rollingExpectancyReduceSizeMult,
+                estimatedFeeBps: this.estimatedFeeBps,
+                consecutiveLosingRoundTrips: this.consecutiveLosingRoundTrips,
             },
             forceFlatten: this.forceFlattenStatus(),
         };

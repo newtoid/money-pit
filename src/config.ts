@@ -53,7 +53,7 @@ const schema = z.object({
     AUTO_CLAIM_ENABLED: z.preprocess((v) => parseEnvBool(v, false), z.boolean()),
     AUTO_CLAIM_INTERVAL_MS: z.coerce.number().default(120000),
     AUTO_CLAIM_MAX_PER_CYCLE: z.coerce.number().default(2),
-    POLYGON_RPC_URL: z.string().default("https://polygon-rpc.com"),
+    POLYGON_RPC_URL: z.string().default("https://polygon-bor-rpc.publicnode.com"),
     CLAIM_ADDRESS: z.string().optional(),
 });
 

@@ -54,6 +54,17 @@ async function main() {
         user: { connected: false, messages: 0, reconnects: 0, lastCloseCode: null as number | null, lastCloseReason: "" },
         market: { connected: false, messages: 0, reconnects: 0, lastCloseCode: null as number | null, lastCloseReason: "" },
     };
+    const lossCooldownMarketsConfiguredRaw = Number(process.env.LOSS_COOLDOWN_MARKETS_AFTER_LOSS ?? "1");
+    const lossCooldownMarketsConfigured = Number.isFinite(lossCooldownMarketsConfiguredRaw)
+        ? Math.max(0, Math.floor(lossCooldownMarketsConfiguredRaw))
+        : 1;
+    let cooldownMarketsRemaining = 0;
+    let cooldownActiveThisMarket = false;
+    let lastMarketNetAfterFeesUsdc: number | null = null;
+    const controls = {
+        tradingEnabled: env.TRADING_ENABLED,
+        overrideTradeWindow: false,
+    };
     const marketLifecycle = {
         completed: 0,
         flatAtHandoff: 0,
@@ -163,10 +174,19 @@ async function main() {
     };
     let active: ActiveRuntime | null = null;
 
+    const applyControlsToActive = () => {
+        if (!active) return;
+        const effectiveTradingEnabled = controls.tradingEnabled && !cooldownActiveThisMarket;
+        active.engine.setTradingEnabled(effectiveTradingEnabled);
+        active.engine.setTradeWindowOverride(controls.overrideTradeWindow);
+    };
+
     const finalizeActiveMarket = () => {
         if (!active) return;
         const snap = active.engine.getSnapshot();
         const pos = Number(snap?.currentYesPosition ?? 0);
+        const netAfterFees = Number(snap?.pnl?.netAfterFeesSessionUsdc ?? NaN);
+        lastMarketNetAfterFeesUsdc = Number.isFinite(netAfterFees) ? netAfterFees : null;
         marketLifecycle.completed += 1;
         marketLifecycle.lastFinalizedMarketId = active.marketId;
         if (pos <= 0) {
@@ -174,6 +194,10 @@ async function main() {
         } else {
             marketLifecycle.leftoverAtHandoff += 1;
             marketLifecycle.leftoverSharesTotal += pos;
+        }
+        if (lastMarketNetAfterFeesUsdc !== null && lastMarketNetAfterFeesUsdc < 0 && lossCooldownMarketsConfigured > 0) {
+            cooldownMarketsRemaining = Math.max(cooldownMarketsRemaining, lossCooldownMarketsConfigured);
+            pushEvent("loss_cooldown_set", `${cooldownMarketsRemaining} market(s)`);
         }
     };
 
@@ -194,6 +218,11 @@ async function main() {
         marketStartUnixSec: number | null;
         marketEndUnixSec: number | null;
     }) => {
+        cooldownActiveThisMarket = cooldownMarketsRemaining > 0;
+        if (cooldownActiveThisMarket) {
+            cooldownMarketsRemaining = Math.max(0, cooldownMarketsRemaining - 1);
+            pushEvent("loss_cooldown_skip_market", `${target.marketId} (${cooldownMarketsRemaining} left after this)`);
+        }
         const engine = new TradeEngine({
             marketId: target.marketId,
             tokenIds: target.tokenIds,
@@ -257,6 +286,7 @@ async function main() {
             userWs,
             marketWs,
         };
+        applyControlsToActive();
 
         userWs.start();
         marketWs.start();
@@ -308,6 +338,28 @@ async function main() {
             logger.error({ err }, "Dashboard server error");
         },
         onRedeemNow: async () => redeemables.redeemNow(),
+        onSetControls: async (patch) => {
+            if (typeof patch.tradingEnabled === "boolean") {
+                controls.tradingEnabled = patch.tradingEnabled;
+                pushEvent("control_trading_enabled", String(controls.tradingEnabled));
+            }
+            if (typeof patch.overrideTradeWindow === "boolean") {
+                controls.overrideTradeWindow = patch.overrideTradeWindow;
+                pushEvent("control_override_trade_window", String(controls.overrideTradeWindow));
+            }
+            applyControlsToActive();
+            const effectiveTradingEnabled = controls.tradingEnabled && !cooldownActiveThisMarket;
+            return {
+                ok: true,
+                controls: {
+                    ...controls,
+                    effectiveTradingEnabled,
+                    cooldownActiveThisMarket,
+                    cooldownMarketsRemaining,
+                    lossCooldownMarketsConfigured,
+                },
+            };
+        },
         getState: () => ({
             ...(function () {
                 const engine = active?.engine.getSnapshot() ?? null;
@@ -367,7 +419,8 @@ async function main() {
             },
             config: {
                 dryRun: env.DRY_RUN,
-                tradingEnabled: env.TRADING_ENABLED,
+                tradingEnabled: controls.tradingEnabled && !cooldownActiveThisMarket,
+                configuredTradingEnabled: env.TRADING_ENABLED,
                 tradingUseSignerAsMaker: env.TRADING_USE_SIGNER_AS_MAKER,
                 tradingFunderAddress: env.TRADING_USE_SIGNER_AS_MAKER
                     ? null
@@ -378,6 +431,16 @@ async function main() {
                         ?? null),
                 credsSource,
                 dashboardPort,
+            },
+            controls: {
+                ...controls,
+                effectiveTradingEnabled: controls.tradingEnabled && !cooldownActiveThisMarket,
+                cooldownActiveThisMarket,
+                cooldownMarketsRemaining,
+                lossCooldownMarketsConfigured,
+            },
+            performance: {
+                lastMarketNetAfterFeesUsdc,
             },
             market: { slug, marketId, question, tokenIds },
             ws: wsState,

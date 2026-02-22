@@ -66,7 +66,7 @@ function parseRpcUrls(): string[] {
     const fromSingle = singleRaw ? [singleRaw] : [];
     const merged = Array.from(new Set([...fromList, ...fromSingle]));
     if (merged.length > 0) return merged;
-    return ["https://polygon-rpc.com"];
+    return ["https://polygon-bor-rpc.publicnode.com"];
 }
 
 function isRetryableRpcError(err: unknown): boolean {

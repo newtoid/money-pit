@@ -43,7 +43,7 @@ npm run dev
 
 - `DRY_RUN=true`: decisions only, no orders posted
 - `TRADING_ENABLED=false`: disables live trading paths
-- `TRADE_WINDOW_ENABLED=true`: only allow order placement inside a GMT time window
+- `TRADE_WINDOW_ENABLED=true`: only allow new BUY entries inside a GMT time window
 - `TRADE_WINDOW_START_GMT=08:30`, `TRADE_WINDOW_END_GMT=10:30`: GMT window bounds (uses UTC clock)
 - `TRADING_USE_SIGNER_AS_MAKER=true`: signer acts as maker
 - `TRADING_USE_SIGNER_AS_MAKER=false`: uses funder/maker mode (`TRADING_FUNDER_ADDRESS`)
@@ -56,12 +56,17 @@ npm run dev
 - `REQUOTE_TICK_THRESHOLD`, `MIN_REQUOTE_MS`, `FORCE_REQUOTE_MS`
 - `BUY_WINDOW_SEC` (buy entries allowed only in this many seconds from market open)
 - `BUY_MIN_LAG_BPS` (minimum lag edge required to open buys)
+- `ENTRY_ESTIMATED_ROUNDTRIP_COST_BPS`, `ENTRY_EXTRA_EDGE_BUFFER_BPS` (fee-adjusted lag requirement for entries)
+- `ENTRY_MAX_YES_SPREAD_BPS` (skip entries when spread is too wide)
 - `BUY_NO_CHASE_WINDOW_MS`, `BUY_NO_CHASE_MAX_UP_BPS` (skip buying into fast upward moves)
 - `MAX_LOSS_PER_MARKET_USDC` (stop new buys once market-level loss limit is breached)
 - `EXIT_LAYERED_ENABLED`, `EXIT_AGGRESSIVE_PCT`, `EXIT_AGGRESSIVE_TICKS` (faster two-step exits)
 - `EXIT_FAST_UNDERCUT_TICKS`, `EXIT_MIN_PROFIT_TICKS` (faster exits while still requiring a small profit)
 - `EXIT_CATCHUP_BUFFER_BPS` (extra tolerance for catch-up exit trigger against buy-time BTC target)
 - `EXIT_FAILSAFE_AFTER_FAILS`, `EXIT_FAILSAFE_EXTRA_TICKS` (more aggressive exits after repeated failures)
+- `SESSION_MAX_CONSECUTIVE_LOSSES`, `SESSION_MAX_NET_LOSS_USDC` (session buy brakes)
+- `LOSS_COOLDOWN_MARKETS_AFTER_LOSS` (skip next N full markets after a losing market)
+- `ESTIMATED_FEE_BPS`, `ROLLING_EXPECTANCY_WINDOW`, `ROLLING_EXPECTANCY_PAUSE_BELOW_USDC`, `ROLLING_EXPECTANCY_REDUCE_SIZE_*` (expectancy-based pause/size reduction)
 - `VENUE_MIN_ORDER_SIZE` (hard minimum size guard; default 5)
 - `CLOB_LEDGER_MIN_INTERVAL_MS` (throttle for `/data/orders` lookups)
 - `NO_NEW_ORDERS_BEFORE_END`, `CANCEL_ALL_BEFORE_END`
@@ -78,8 +83,9 @@ This is how the bot behaves during normal operation:
 2. If BTC tracker is higher than Polystorm tracker (bullish lag):
 - The bot prioritizes **buying YES**
 - It does **not** place normal sell quotes right away
-- It can require extra lag edge (`BUY_MIN_LAG_BPS`) before buying
+- It requires fee-adjusted lag edge before buying (`BUY_MIN_LAG_BPS` + fee/buffer settings)
 - It can block "chasing" after a quick pop (`BUY_NO_CHASE_*`)
+- It can skip entries if spread is too wide (`ENTRY_MAX_YES_SPREAD_BPS`)
 
 3. After it has bought YES, it waits for Polystorm YES price to rise:
 - It records BTC move at buy time and waits for Polymarket implied move to catch up to that level
@@ -102,8 +108,13 @@ This is how the bot behaves during normal operation:
 - Sell/exit orders can still be placed after the buy window so inventory can be closed before expiry.
 
 7. Trades are also restricted by clock time (GMT):
-- With `TRADE_WINDOW_ENABLED=true`, the bot only places orders between `TRADE_WINDOW_START_GMT` and `TRADE_WINDOW_END_GMT`.
-- Outside that GMT window, it stops placing orders and cancels open YES orders.
+- With `TRADE_WINDOW_ENABLED=true`, the bot only opens new BUY entries between `TRADE_WINDOW_START_GMT` and `TRADE_WINDOW_END_GMT`.
+- Outside that GMT window, BUY entries are blocked, but SELL exits remain allowed.
+
+8. Session safety brakes:
+- If losing streak/session loss limits are hit, the bot pauses new buys (`SESSION_MAX_*`).
+- If rolling net after-fee round-trip expectancy degrades, it can reduce buy size or pause (`ROLLING_EXPECTANCY_*`).
+- If a market closes net-negative, it can skip the next N markets (`LOSS_COOLDOWN_MARKETS_AFTER_LOSS`).
 
 Simple example:
 - Bot buys YES at average 0.52
@@ -218,7 +229,7 @@ Common reasons:
 
 ### How do end-of-window settings work together?
 
-- `NO_NEW_ORDERS_BEFORE_END`: stop normal quote placement near the end.
+- `NO_NEW_ORDERS_BEFORE_END`: stop opening new BUY entries near the end.
 - `FORCE_FLATTEN_ENABLED=true`: switch to exit-only behavior near the end.
 - `FORCE_FLATTEN_BEFORE_END_SEC`: when forced flatten starts.
 - `FORCE_FLATTEN_ALLOW_LOSS=false` (default): do not force-sell below average entry.
@@ -245,6 +256,35 @@ Important tradeoff:
 - `marketsClosed`: number of markets the bot has handed off/closed.
 - `flatOnHandoff`: percent of closed markets where inventory was fully flat at handoff.
 - `leftoverMarkets`: number of markets that ended with leftover position.
+- `Controls` card:
+  - `Trading Enabled`: live start/stop switch for order placement.
+  - `Override Trade Window`: ignores GMT buy window while ON (manual override).
+  - `cooldown`: auto safety mode after a losing market; trading can show manual ON but effective OFF while cooldown is active.
+- `Opportunity Replay`:
+  - Chart markers show possible past buy/sell sequences under current rules.
+  - Green dots are potential buys, red dots are potential sells.
+  - This is educational replay logic (price-based), not actual executed fills.
+
+## DRY_RUN With Full Metrics
+
+Use `DRY_RUN=true` to run the exact same decision logic without sending orders.
+
+What still works:
+- Signal/lag calculations
+- Entry/exit gating logic
+- Buy/sell intent decisions and skip reasons in logs/dashboard
+- Risk guards that are based on market state (spread, lag, windows, time rules)
+
+What does not happen in DRY_RUN:
+- No live order placement, so no real fills
+- Fill-based P/L/round-trip metrics do not evolve like live trading
+- Loss-cooldown-after-market will generally not trigger without real realized outcomes
+
+How to use this to your advantage:
+1. Run DRY_RUN for multiple days and export logs.
+2. Count how often entries were allowed vs blocked, and why.
+3. Tune entry quality knobs (`ENTRY_*`, spread limits, no-chase) to reduce weak entries.
+4. Only move to live once the decision stream is selective and stable across different days.
 
 ## Safety Notes
 

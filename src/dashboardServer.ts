@@ -4,6 +4,7 @@ type DashboardServerOpts = {
     port: number;
     getState: () => unknown;
     onRedeemNow?: () => Promise<unknown>;
+    onSetControls?: (controls: { tradingEnabled?: boolean; overrideTradeWindow?: boolean }) => Promise<unknown> | unknown;
     onError?: (err: unknown) => void;
     onListening?: (port: number) => void;
 };
@@ -78,6 +79,8 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Market</div><div id="market" class="v"></div><div id="window" class="small"></div></div>
       <div class="card span-3"><div class="k">Connections</div><div id="conns" class="v"></div><div id="wsdetail" class="small"></div></div>
       <div class="card span-3"><div class="k">Signal</div><div id="signal" class="v"></div><div id="signal2" class="small"></div><div id="lagBadge" class="small"></div><div id="flattenBadge" class="small"></div></div>
+      <div class="card span-6"><div class="k">What Is Happening</div><div id="story" class="v"></div><div id="story2" class="small"></div></div>
+      <div class="card span-6"><div class="k">Opportunity Replay</div><div id="replay" class="v"></div><div id="replay2" class="small"></div></div>
       <div class="card span-3"><div class="k">Dust Sweeper</div><div id="dust" class="v"></div><div id="dust2" class="small"></div><div id="dust3" class="small"></div><div id="dust4" class="small"></div></div>
       <div class="card span-3"><div class="k">Redeemables</div><div id="redeemables" class="v"></div><div id="redeemables2" class="small"></div><button id="redeemNowBtn" style="margin-top:8px;padding:6px 10px;border:1px solid #334155;background:#0f172a;color:#e5edf8;border-radius:6px;cursor:pointer;">Redeem Now</button></div>
 
@@ -130,6 +133,7 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Execution</div><div id="exec" class="v"></div><div id="exec2" class="small"></div></div>
       <div class="card span-3"><div class="k">Force Flatten</div><div id="flatten" class="v"></div><div id="flatten2" class="small"></div></div>
       <div class="card span-3"><div class="k">Portfolio</div><div id="portfolio" class="v"></div><div id="portfolio2" class="small"></div></div>
+      <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><br/><label><input type="checkbox" id="windowOverrideToggle" /> Override Trade Window</label><br/><small>Override ignores GMT buy window.</small><div id="controlMsg" class="small"></div></div></div>
 
       <div class="card span-12"><div class="k">Recent Events</div><pre id="events"></pre></div>
       <div class="card span-12">
@@ -144,6 +148,7 @@ function htmlPage() {
   <script>
     const HISTORY_MAX = 3600;
     const hist = [];
+    let replay = { marks: [], cycles: 0, wins: 0, gross: 0, open: false };
 
     function cls(ok) { return ok ? "ok" : "bad"; }
     function fmtTs(ts){ return ts ? new Date(ts).toLocaleTimeString() : "-"; }
@@ -181,6 +186,7 @@ function htmlPage() {
       const q = engine.lastQuote || {};
       const pnl = engine.pnl || {};
       const signal = s.signal || {};
+      const guards = engine.entryGuards || {};
       const collateral = engine.collateral || {};
       const cashRaw = Number(collateral.balanceRaw);
       const cashUsdc = Number.isFinite(cashRaw) ? (cashRaw / 1_000_000) : null;
@@ -190,6 +196,9 @@ function htmlPage() {
         ? (invShares * Number(fairYes))
         : null;
       const equityUsdc = (cashUsdc !== null && inventoryUsdc !== null) ? (cashUsdc + inventoryUsdc) : null;
+      const spreadBps = (Number.isFinite(Number(q.ask)) && Number.isFinite(Number(q.bid)) && ((Number(q.ask) + Number(q.bid)) > 0))
+        ? (((Number(q.ask) - Number(q.bid)) / ((Number(q.ask) + Number(q.bid)) / 2)) * 10000)
+        : null;
       hist.push({
         t: Date.now(),
         fair: q.fairYes ?? null,
@@ -204,6 +213,9 @@ function htmlPage() {
         spot: signal.spotPrice ?? null,
         inv: engine.currentYesPosition ?? null,
         net: pnl.netYes ?? null,
+        requiredLagBps: guards.requiredLagBps ?? null,
+        maxYesSpreadBps: guards.maxYesSpreadBps ?? null,
+        spreadBps,
         cashUsdc,
         inventoryUsdc,
         equityUsdc,
@@ -289,14 +301,66 @@ function htmlPage() {
       ctx.fillText(num(max, opts && opts.decimals !== undefined ? opts.decimals : 4), 3, pad.t + 8);
       ctx.fillText(num(min, opts && opts.decimals !== undefined ? opts.decimals : 4), 3, h - pad.b);
       ctx.fillText("-" + Math.floor(hist.length) + "s", w - 50, h - 4);
+
+      // Replay markers: green = potential buy, red = potential sell.
+      if (opts && Array.isArray(opts.markers) && opts.markers.length > 0) {
+        for (const m of opts.markers) {
+          if (!Number.isFinite(m.idx) || m.idx < 0 || m.idx >= hist.length) continue;
+          const x = xAt(m.idx);
+          let y = yAt(Number.isFinite(m.price) ? m.price : ((min + max) / 2));
+          if (!Number.isFinite(y)) y = pad.t + (innerH / 2);
+          ctx.fillStyle = m.kind === "buy" ? "#22c55e" : "#ef4444";
+          ctx.beginPath();
+          ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    function computeOpportunityReplay() {
+      const marks = [];
+      let inPos = false;
+      let entry = null;
+      let cycles = 0;
+      let wins = 0;
+      let gross = 0;
+      for (let i = 1; i < hist.length; i++) {
+        const p = hist[i];
+        if (!inPos) {
+          const lagOk = Number.isFinite(p.lagBps) && Number.isFinite(p.requiredLagBps) && p.lagBps >= p.requiredLagBps;
+          const spreadOk = !Number.isFinite(p.maxYesSpreadBps) || !Number.isFinite(p.spreadBps) || p.spreadBps <= p.maxYesSpreadBps;
+          const buyPrice = Number.isFinite(p.bid) ? p.bid : (Number.isFinite(p.fair) ? p.fair : null);
+          if (lagOk && spreadOk && Number.isFinite(buyPrice)) {
+            inPos = true;
+            entry = { idx: i, price: buyPrice, spotMoveBps: p.spotMoveBps };
+            marks.push({ idx: i, price: buyPrice, kind: "buy" });
+          }
+          continue;
+        }
+
+        const sellPrice = Number.isFinite(p.ask) ? p.ask : (Number.isFinite(p.fair) ? p.fair : null);
+        const catchup = !Number.isFinite(entry.spotMoveBps) || (Number.isFinite(p.polyImpliedMoveBps) && p.polyImpliedMoveBps >= entry.spotMoveBps);
+        const risen = Number.isFinite(sellPrice) && sellPrice > entry.price;
+        if (catchup && risen && Number.isFinite(sellPrice)) {
+          marks.push({ idx: i, price: sellPrice, kind: "sell" });
+          const pnl = sellPrice - entry.price;
+          gross += pnl;
+          cycles += 1;
+          if (pnl > 0) wins += 1;
+          inPos = false;
+          entry = null;
+        }
+      }
+      return { marks, cycles, wins, gross, open: inPos };
     }
 
     function renderCharts(){
+      replay = computeOpportunityReplay();
       drawChart("fairChart", [
         { key: "fair", color: "#60a5fa" },
         { key: "bid", color: "#fbbf24" },
         { key: "ask", color: "#a78bfa" },
-      ], { min: 0, max: 1, decimals: 4 });
+      ], { min: 0, max: 1, decimals: 4, markers: replay.marks });
 
       drawChart("edgeChart", [
         { key: "signalFair", color: "#60a5fa" },
@@ -308,7 +372,7 @@ function htmlPage() {
         { key: "spotMoveBps", color: "#60a5fa" },
         { key: "polyImpliedMoveBps", color: "#fbbf24" },
         { key: "lagBps", color: "#22c55e" },
-      ], { decimals: 1, symmetric: true });
+      ], { decimals: 1, symmetric: true, markers: replay.marks.map(m => ({ ...m, price: hist[m.idx]?.lagBps })) });
 
       drawChart("spotChart", [{ key: "spot", color: "#60a5fa" }], { decimals: 2 });
 
@@ -319,6 +383,7 @@ function htmlPage() {
     }
 
     let redeemBusy = false;
+    let controlBusy = false;
 
     async function redeemNow() {
       if (redeemBusy) return;
@@ -345,6 +410,32 @@ function htmlPage() {
       }
     }
 
+    async function setControlPatch(patch) {
+      if (controlBusy) return;
+      controlBusy = true;
+      const t = document.getElementById('tradingToggle');
+      const w = document.getElementById('windowOverrideToggle');
+      const m = document.getElementById('controlMsg');
+      t.disabled = true;
+      w.disabled = true;
+      try {
+        const res = await fetch('/api/control', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(patch),
+        });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body && body.error ? body.error : 'control update failed');
+        m.textContent = 'updated';
+      } catch (e) {
+        m.textContent = 'control error: ' + String(e);
+      } finally {
+        controlBusy = false;
+        t.disabled = false;
+        w.disabled = false;
+      }
+    }
+
     async function tick() {
       try {
         const res = await fetch('/api/status', { cache: 'no-store' });
@@ -356,19 +447,24 @@ function htmlPage() {
         const sig = s.signal || {};
         const lagArb = (e && e.lagArb) ? e.lagArb : {};
         const ff = (e && e.forceFlatten) ? e.forceFlatten : {};
+        const tw = (e && e.tradeWindow) ? e.tradeWindow : {};
+        const controls = s.controls || {};
 
         pushPoint(s);
         renderCharts();
 
         document.getElementById('process').innerHTML =
           '<span class="'+cls(s.process.running)+'">' + (s.process.running ? 'RUNNING' : 'STOPPED') + '</span>'
-          + ' · dryRun=' + s.config.dryRun + ' · trading=' + s.config.tradingEnabled;
+          + ' · dryRun=' + s.config.dryRun + ' · trading=' + ((controls.effectiveTradingEnabled ?? s.config.tradingEnabled) ? 'ON' : 'OFF')
+          + ' · manual=' + ((controls.tradingEnabled ?? false) ? 'ON' : 'OFF');
         const ml = s.marketLifecycle || {};
         document.getElementById('uptime').textContent = 'uptime ' + s.process.uptimeSec + 's'
           + ' · creds=' + s.config.credsSource
           + ' · marketsClosed=' + (ml.completed ?? 0)
           + ' · flatOnHandoff=' + num(ml.flatRatePct, 1) + '%'
-          + ' · leftoverMarkets=' + (ml.leftoverAtHandoff ?? 0);
+          + ' · leftoverMarkets=' + (ml.leftoverAtHandoff ?? 0)
+          + ' · buyWindowGMT=' + (tw.enabled ? ((tw.active ? 'active' : 'blocked') + ' ' + (tw.startGmt || '-') + '-' + (tw.endGmt || '-')) : 'off')
+          + (tw.override ? ' · override=ON' : '');
 
         document.getElementById('market').textContent = (s.market.slug || '-') + ' | ' + (s.market.marketId || '-');
         document.getElementById('window').textContent = 'tokens=' + ((s.market.tokenIds || []).length) + ' · question=' + (s.market.question || '-');
@@ -389,6 +485,14 @@ function htmlPage() {
           + ' · polyMove=' + num(sig.polymarketImpliedMoveBps, 1) + ' bps'
           + ' · lag=' + num(sig.lagBps, 1) + ' bps'
           + ' · connected=' + (sig.spotConnected ? 'yes' : 'no');
+        const inPos = Number(e.currentYesPosition ?? 0) > 0;
+        const lagOkNow = Number.isFinite(sig.lagBps) && Number.isFinite(e.entryGuards?.requiredLagBps) && Number(sig.lagBps) >= Number(e.entryGuards.requiredLagBps);
+        document.getElementById('story').textContent =
+          inPos
+            ? 'Holding YES and waiting for catch-up/price-rise exit.'
+            : (lagOkNow ? 'Setup looks favorable: lag is above required edge.' : 'No strong edge now: waiting for better lag/spread.');
+        document.getElementById('story2').textContent =
+          'Rule: buy when BTC leads; sell when Polymarket catches up and price rises.';
         const regime = Number(lagArb.regime ?? 0);
         const lagVal = sig.lagBps;
         const regimeLabel = regime > 0 ? 'BULLISH YES' : (regime < 0 ? 'BEARISH YES' : 'NEUTRAL');
@@ -519,11 +623,33 @@ function htmlPage() {
           'rolling gains/losses: 1m ' + dlt(p1m)
           + ' · 5m ' + dlt(p5m)
           + ' · 15m ' + dlt(p15m)
+          + ' · sessionNet(afterFees)=' + dlt(pnl.netAfterFeesSessionUsdc)
+          + ' · rollingCycleNet(afterFees)=' + dlt(pnl.rollingAvgCycleNetAfterFeesUsdc)
           + ' · avgEntryLag=' + num(pnl.avgEntryLagBps, 1) + 'bps'
           + ' · avgHold=' + num(pnl.avgHoldSec, 1) + 's'
           + ' · currentHold=' + num(pnl.currentHoldSec, 1) + 's'
           + ' · pos=' + num(e.currentYesPosition, 2)
           + ' @fair ' + num((Number.isFinite(fairYes) ? fairYes : null), 4);
+        const replayWinRate = replay.cycles > 0 ? ((replay.wins / replay.cycles) * 100) : null;
+        document.getElementById('replay').textContent =
+          'possible cycles=' + replay.cycles
+          + ' · wins=' + replay.wins
+          + ' · winRate=' + num(replayWinRate, 1) + '%';
+        document.getElementById('replay2').textContent =
+          'replay gross (price-only)=' + num(replay.gross, 4)
+          + ' · openCycle=' + (replay.open ? 'yes' : 'no')
+          + ' · chart dots: green=buy, red=sell';
+
+        document.getElementById('controls').textContent =
+          'trading(effective)=' + ((controls.effectiveTradingEnabled ?? false) ? 'ON' : 'OFF')
+          + ' · manual=' + ((controls.tradingEnabled ?? false) ? 'ON' : 'OFF')
+          + ' · override=' + ((controls.overrideTradeWindow ?? false) ? 'ON' : 'OFF')
+          + ' · cooldown=' + ((controls.cooldownActiveThisMarket ?? false) ? 'ACTIVE' : 'off')
+          + ' · cooldownLeft=' + (controls.cooldownMarketsRemaining ?? 0);
+        if (!controlBusy) {
+          document.getElementById('tradingToggle').checked = !!controls.tradingEnabled;
+          document.getElementById('windowOverrideToggle').checked = !!controls.overrideTradeWindow;
+        }
 
         document.getElementById('events').textContent =
           (s.events || []).map(e => '[' + fmtTs(e.at) + '] ' + e.type + ' ' + (e.msg || '')).join('\\n');
@@ -536,6 +662,14 @@ function htmlPage() {
     setInterval(tick, 1000);
     window.addEventListener('resize', renderCharts);
     document.getElementById('redeemNowBtn').addEventListener('click', redeemNow);
+    document.getElementById('tradingToggle').addEventListener('change', (ev) => {
+      const checked = !!(ev && ev.target && ev.target.checked);
+      void setControlPatch({ tradingEnabled: checked });
+    });
+    document.getElementById('windowOverrideToggle').addEventListener('change', (ev) => {
+      const checked = !!(ev && ev.target && ev.target.checked);
+      void setControlPatch({ overrideTradeWindow: checked });
+    });
   </script>
 </body>
 </html>`;
@@ -569,6 +703,47 @@ export function startDashboardServer(opts: DashboardServerOpts) {
                     res.writeHead(500, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
                     res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
                 });
+            return;
+        }
+
+        if (url === "/api/control" && req.method === "POST") {
+            if (!opts.onSetControls) {
+                res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+                res.end(JSON.stringify({ ok: false, error: "control_not_configured" }));
+                return;
+            }
+            let raw = "";
+            req.setEncoding("utf8");
+            req.on("data", (chunk) => {
+                raw += chunk;
+                if (raw.length > 32_000) req.destroy();
+            });
+            req.on("end", () => {
+                let parsed: any = {};
+                try {
+                    parsed = raw ? JSON.parse(raw) : {};
+                } catch {
+                    res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+                    res.end(JSON.stringify({ ok: false, error: "invalid_json" }));
+                    return;
+                }
+                const controls: { tradingEnabled?: boolean; overrideTradeWindow?: boolean } = {};
+                if (typeof parsed?.tradingEnabled === "boolean") controls.tradingEnabled = parsed.tradingEnabled;
+                if (typeof parsed?.overrideTradeWindow === "boolean") controls.overrideTradeWindow = parsed.overrideTradeWindow;
+                void Promise.resolve(opts.onSetControls?.(controls))
+                    .then((body) => {
+                        res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+                        res.end(JSON.stringify(body ?? { ok: true }));
+                    })
+                    .catch((err) => {
+                        res.writeHead(500, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+                        res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+                    });
+            });
+            req.on("error", (err) => {
+                res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
+                res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+            });
             return;
         }
 
