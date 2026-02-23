@@ -219,10 +219,12 @@ export class TradeEngine {
     private readonly exitCatchupBufferBps = Math.max(0, getEnvNumber("EXIT_CATCHUP_BUFFER_BPS", 0));
     private readonly exitFailsafeAfterFails = Math.max(1, getEnvInt("EXIT_FAILSAFE_AFTER_FAILS", 3));
     private readonly exitFailsafeExtraTicks = Math.max(0, getEnvInt("EXIT_FAILSAFE_EXTRA_TICKS", 1));
+    private readonly exitUseMarketOnSignal = getEnvBool("EXIT_USE_MARKET_ON_SIGNAL", true);
     private readonly maxLossPerMarketUsdc = Math.max(0, getEnvNumber("MAX_LOSS_PER_MARKET_USDC", 0));
     private readonly clobLedgerMinIntervalMs = Math.max(0, getEnvInt("CLOB_LEDGER_MIN_INTERVAL_MS", 100));
     private readonly forceFlattenEnabled = getEnvBool("FORCE_FLATTEN_ENABLED", true);
     private readonly forceFlattenBeforeEndSec = Math.max(0, getEnvInt("FORCE_FLATTEN_BEFORE_END_SEC", 40));
+    private readonly forceFlattenHardDeadlineSec = Math.max(0, getEnvInt("FORCE_FLATTEN_HARD_DEADLINE_SEC", 5));
     private readonly forceFlattenAllowLoss = getEnvBool("FORCE_FLATTEN_ALLOW_LOSS", false);
     private readonly forceFlattenMode: "protect_price" | "guarantee_flat" = (
         String(process.env.FORCE_FLATTEN_MODE ?? "protect_price").trim().toLowerCase() === "guarantee_flat"
@@ -734,6 +736,7 @@ export class TradeEngine {
             let effectiveAsk = next.ask;
             let dustRecoveryShortSell = false;
             let buyGateReason: string | null = null;
+            let exitFailsafeActive = false;
 
             if (!bullishTracker) {
                 // Directional mode: only buy when BTC tracker leads Polymarket.
@@ -773,8 +776,8 @@ export class TradeEngine {
             if (exitSignal.active) {
                 buySize = 0;
                 effectiveAsk = exitSignal.exitPrice;
-                const failsafeActive = this.consecutiveExitFailures >= this.exitFailsafeAfterFails;
-                if (failsafeActive && this.exitFailsafeExtraTicks > 0) {
+                exitFailsafeActive = this.consecutiveExitFailures >= this.exitFailsafeAfterFails;
+                if (exitFailsafeActive && this.exitFailsafeExtraTicks > 0) {
                     effectiveAsk = clampToTickBounds(
                         roundDownToTick(
                             effectiveAsk - (this.exitFailsafeExtraTicks * this.tickSize),
@@ -903,7 +906,19 @@ export class TradeEngine {
                 }
 
                 if (sellSize > 0) {
-                    if (exitSignal.active && this.exitLayeredEnabled && sellSize >= (this.minOrderSize * 2)) {
+                    if (exitSignal.active && this.exitUseMarketOnSignal) {
+                        await this.clobClient.createAndPostMarketOrder(
+                            {
+                                tokenID: this.yesTokenId,
+                                side: Side.SELL,
+                                amount: sellSize,
+                            },
+                            { tickSize: String(this.tickSize) as any },
+                            OrderType.FAK as any,
+                        );
+                        sellPlaced = true;
+                        this.state.sellOrdersPlaced += 1;
+                    } else if (exitSignal.active && this.exitLayeredEnabled && sellSize >= (this.minOrderSize * 2)) {
                         const aggressiveRawPrice = clampToTickBounds(
                             effectiveAsk - (this.exitAggressiveTicks * this.tickSize),
                             this.tickSize,
@@ -1025,6 +1040,8 @@ export class TradeEngine {
                         takeProfitEnabled: this.takeProfitEnabled,
                         takeProfitActive: exitSignal.active,
                         takeProfitReason: exitSignal.reason,
+                        exitUseMarketOnSignal: this.exitUseMarketOnSignal,
+                        exitFailsafeActive,
                         dustRecoveryShortSell,
                         buySkippedReason,
                         sellSkippedReason,
@@ -1359,8 +1376,9 @@ export class TradeEngine {
 
         const candidateExit = clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
         const breakEven = this.avgEntryPriceYes > 0 ? this.avgEntryPriceYes : null;
+        const hardDeadlineActive = this.forceFlattenHardDeadlineSec > 0 && secondsToEnd <= this.forceFlattenHardDeadlineSec;
         const protectPrice = this.forceFlattenMode === "protect_price" && !this.forceFlattenAllowLoss;
-        if (protectPrice && breakEven !== null && candidateExit < breakEven) {
+        if (!hardDeadlineActive && protectPrice && breakEven !== null && candidateExit < breakEven) {
             const now = Date.now();
             if (now - this.lastForceFlattenLogAt > 3000) {
                 logger.warn(
@@ -1406,6 +1424,7 @@ export class TradeEngine {
                     avgEntryPriceYes: this.avgEntryPriceYes,
                     exitPrice: candidateExit,
                     sellSize,
+                    hardDeadlineActive,
                     forceFlattenMode: this.forceFlattenMode,
                     mode: this.runtimeTradingEnabled ? "dry_run" : "trading_disabled",
                     dustRecoveryShortSell,
@@ -1420,16 +1439,28 @@ export class TradeEngine {
         } catch (err) {
             logger.warn({ err, marketId: this.marketId }, "Cancel-all before force-flatten SELL failed; continuing with SELL");
         }
-        await this.clobClient.createAndPostOrder(
-            {
-                tokenID: this.yesTokenId,
-                side: Side.SELL,
-                size: sellSize,
-                price: candidateExit,
-            },
-            { tickSize: String(this.tickSize) as any },
-            OrderType.GTC,
-        );
+        if (hardDeadlineActive) {
+            await this.clobClient.createAndPostMarketOrder(
+                {
+                    tokenID: this.yesTokenId,
+                    side: Side.SELL,
+                    amount: sellSize,
+                },
+                { tickSize: String(this.tickSize) as any },
+                OrderType.FAK as any,
+            );
+        } else {
+            await this.clobClient.createAndPostOrder(
+                {
+                    tokenID: this.yesTokenId,
+                    side: Side.SELL,
+                    size: sellSize,
+                    price: candidateExit,
+                },
+                { tickSize: String(this.tickSize) as any },
+                OrderType.GTC,
+            );
+        }
         this.state.sellOrdersPlaced += 1;
 
         logger.info(
@@ -1442,6 +1473,7 @@ export class TradeEngine {
                 avgEntryPriceYes: this.avgEntryPriceYes,
                 exitPrice: candidateExit,
                 sellSize,
+                hardDeadlineActive,
                 forceFlattenMode: this.forceFlattenMode,
                 forceFlattenAllowLoss: this.forceFlattenAllowLoss,
                 dustRecoveryShortSell,
@@ -1464,10 +1496,16 @@ export class TradeEngine {
         const candidateExit = bestBid === null
             ? null
             : clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
+        const hardDeadlineActive = (
+            this.forceFlattenHardDeadlineSec > 0
+            && secondsToEnd !== null
+            && secondsToEnd <= this.forceFlattenHardDeadlineSec
+        );
         const protectPrice = this.forceFlattenMode === "protect_price" && !this.forceFlattenAllowLoss;
         const blockedByNoLoss = (
             inWindow
             && hasInventory
+            && !hardDeadlineActive
             && protectPrice
             && candidateExit !== null
             && this.avgEntryPriceYes > 0
@@ -1489,6 +1527,8 @@ export class TradeEngine {
             allowLoss: this.forceFlattenAllowLoss,
             mode: this.forceFlattenMode,
             beforeEndSec: this.forceFlattenBeforeEndSec,
+            hardDeadlineSec: this.forceFlattenHardDeadlineSec,
+            hardDeadlineActive,
             noNewOrdersBeforeEndSec: this.noNewOrdersBeforeEndSec,
             cancelAllBeforeEndSec: this.cancelAllBeforeEndSec,
             secondsToEnd,

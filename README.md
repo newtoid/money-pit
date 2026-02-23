@@ -59,6 +59,7 @@ npm run dev
 - `BUY_NO_CHASE_WINDOW_MS`, `BUY_NO_CHASE_MAX_UP_BPS` (skip buying into fast upward moves)
 - `MAX_LOSS_PER_MARKET_USDC` (stop new buys once market-level loss limit is breached)
 - `EXIT_LAYERED_ENABLED`, `EXIT_AGGRESSIVE_PCT`, `EXIT_AGGRESSIVE_TICKS` (faster two-step exits)
+- `EXIT_USE_MARKET_ON_SIGNAL` (when exit triggers, use marketable sell/FAK for faster fills)
 - `EXIT_FAST_UNDERCUT_TICKS`, `EXIT_MIN_PROFIT_TICKS` (faster exits while still requiring a small profit)
 - `EXIT_CATCHUP_BUFFER_BPS` (extra tolerance for catch-up exit trigger against buy-time BTC target)
 - `EXIT_FAILSAFE_AFTER_FAILS`, `EXIT_FAILSAFE_EXTRA_TICKS` (more aggressive exits after repeated failures)
@@ -68,7 +69,7 @@ npm run dev
 - `VENUE_MIN_ORDER_SIZE` (hard minimum size guard; default 5)
 - `CLOB_LEDGER_MIN_INTERVAL_MS` (throttle for `/data/orders` lookups)
 - `NO_NEW_ORDERS_BEFORE_END`, `CANCEL_ALL_BEFORE_END`
-- `FORCE_FLATTEN_ENABLED`, `FORCE_FLATTEN_BEFORE_END_SEC`, `FORCE_FLATTEN_ALLOW_LOSS`
+- `FORCE_FLATTEN_ENABLED`, `FORCE_FLATTEN_BEFORE_END_SEC`, `FORCE_FLATTEN_ALLOW_LOSS`, `FORCE_FLATTEN_MODE`, `FORCE_FLATTEN_HARD_DEADLINE_SEC`
 
 ## Strategy In Plain English
 
@@ -100,6 +101,7 @@ This is how the bot behaves during normal operation:
 - This is separate from "no new orders" and is meant to reduce leftover positions
 - `FORCE_FLATTEN_MODE=protect_price` tries to avoid realizing losses while flattening
 - `FORCE_FLATTEN_MODE=guarantee_flat` prioritizes exiting inventory before expiry
+- In the final hard-deadline seconds (`FORCE_FLATTEN_HARD_DEADLINE_SEC`), it will prioritize getting flat.
 
 6. Buys are limited to an early market window:
 - `BUY_WINDOW_SEC` controls how long new buys are allowed after market start (default `180` = first 3 minutes).
@@ -187,8 +189,11 @@ Redeemables:
 - `REDEEMABLES_ADDRESSES` (optional scan list)
 - `POLYGON_RPC_URL` (single provider)
 - `POLYGON_RPC_URLS` (optional comma-separated failover providers; preferred)
+- `CLAIM_ADDRESS` (wallet to redeem for; usually your funder wallet)
+- `REDEEM_PRIVATE_KEY` (optional dedicated redeem signer key; should match `CLAIM_ADDRESS`)
 
 Dashboard includes a `Redeem Now` button and redeem history table.
+If wallet/key mapping is wrong, dashboard now shows a plain-English `blocked=...` reason and disables `Redeem Now`.
 
 ## Common Issues
 
@@ -198,6 +203,9 @@ Dashboard includes a `Redeem Now` button and redeem history table.
   - another process may already be listening on `8787`
 - Redeem RPC errors:
   - set valid `POLYGON_RPC_URLS` (or at least `POLYGON_RPC_URL`) provider endpoint(s)
+- Redeem button blocked / wallet mismatch:
+  - ensure `CLAIM_ADDRESS` is the wallet with redeemables
+  - ensure `REDEEM_PRIVATE_KEY` (or fallback key) derives to the same address
 
 ## FAQ (Plain English)
 
@@ -226,7 +234,8 @@ Common reasons:
 - `NO_NEW_ORDERS_BEFORE_END`: stop opening new BUY entries near the end.
 - `FORCE_FLATTEN_ENABLED=true`: switch to exit-only behavior near the end.
 - `FORCE_FLATTEN_BEFORE_END_SEC`: when forced flatten starts.
-- `FORCE_FLATTEN_ALLOW_LOSS=false` (default): do not force-sell below average entry.
+- `FORCE_FLATTEN_ALLOW_LOSS`: if true, flatten can sell below average entry price.
+- `FORCE_FLATTEN_HARD_DEADLINE_SEC`: final seconds where bot prioritizes getting flat.
 
 Important tradeoff:
 - If `FORCE_FLATTEN_ALLOW_LOSS=false`, the bot protects against realized losses, but flattening is not guaranteed if price stays below entry.

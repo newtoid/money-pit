@@ -17,86 +17,93 @@ function htmlPage() {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Polymarket 5m Maker</title>
   <style>
+    :root{
+      --bg0:#050910;
+      --bg1:#081426;
+      --bg2:#0b1f38;
+      --card:#0c1727cc;
+      --line:#2f4f74;
+      --text:#d9f3ff;
+      --muted:#8eb2cb;
+      --neon:#3bf7c2;
+      --cyan:#5bc0ff;
+      --gold:#ffc857;
+      --violet:#b69cff;
+    }
     * { box-sizing:border-box; }
     body {
       margin:0;
       background:
-        repeating-linear-gradient(90deg, #f4e9d3 0, #f4e9d3 14px, #efe1c6 14px, #efe1c6 28px),
-        radial-gradient(1000px 520px at 10% -20%, #d48a3a33, transparent),
-        linear-gradient(165deg, #f3e2c3, #ebd7b1 42%, #e5cda3);
-      color:#2f2416;
-      font:13px/1.35 "Courier New", Courier, "Liberation Mono", monospace;
+        radial-gradient(1000px 520px at 8% -10%, #3bf7c222, transparent 60%),
+        radial-gradient(900px 460px at 92% -6%, #5bc0ff20, transparent 56%),
+        linear-gradient(145deg, var(--bg0), var(--bg1) 45%, var(--bg2));
+      color:var(--text);
+      font:13px/1.35 "Space Grotesk", "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+      position:relative;
+      overflow-x:hidden;
     }
-    .wrap { max-width:1400px; margin:20px auto; padding:0 14px; }
-    .bg-cast {
+    body::before{
+      content:"";
       position:fixed;
       inset:0;
       pointer-events:none;
-      z-index:0;
-      overflow:hidden;
+      background:
+        linear-gradient(transparent 96%, #7affd910 96%),
+        linear-gradient(90deg, transparent 96%, #7bc7ff0f 96%);
+      background-size:100% 20px, 20px 100%;
+      opacity:.45;
     }
-    .cast-card {
-      position:absolute;
-      width:220px;
-      padding:10px 12px;
-      border:1px solid #9f6a2f66;
-      border-radius:12px;
-      background:linear-gradient(180deg, #f6e3c28a, #e7c78b80);
-      box-shadow:0 8px 20px #5a351733;
-      color:#5f3312;
-      transform:rotate(-2deg);
-      backdrop-filter: blur(1px);
+    body::after{
+      content:"";
+      position:fixed;
+      inset:0;
+      pointer-events:none;
+      background:linear-gradient(180deg, #00ffe208 0%, transparent 20%, transparent 80%, #00ffe208 100%);
+      mix-blend-mode:screen;
     }
-    .cast-card .name { font:700 12px/1.2 "Palatino Linotype", Palatino, serif; text-transform:uppercase; letter-spacing:.04em; }
-    .cast-card .line { margin-top:4px; font-size:12px; }
-    .cast-card .avatar {
-      display:inline-block;
-      width:24px;
-      height:24px;
-      border-radius:999px;
-      margin-right:6px;
-      vertical-align:middle;
-      border:1px solid #7a4a1f88;
-      background:radial-gradient(circle at 30% 25%, #fbe8c5, #cc9554);
-      text-align:center;
-      line-height:22px;
-      font-size:11px;
-      font-weight:700;
-      color:#5b2c06;
-    }
-    .cast-a { left:2%; top:12%; }
-    .cast-b { right:3%; top:20%; transform:rotate(2deg); }
-    .cast-c { left:3%; bottom:12%; transform:rotate(1deg); }
-    .cast-d { right:4%; bottom:8%; transform:rotate(-1deg); }
+    .wrap { max-width:1400px; margin:20px auto; padding:0 14px; }
     .mast {
       margin:0 0 12px;
       padding:10px 12px;
-      border:2px solid #7a4a1f;
+      border:1px solid var(--line);
       border-radius:10px;
-      background:linear-gradient(180deg, #fae6be, #f0d39d);
-      box-shadow:0 4px 14px #6d4d252e;
+      background:linear-gradient(180deg, #13263e, #0b1628);
+      box-shadow:0 6px 24px #00000070, inset 0 0 0 1px #3bf7c22e;
+      position:relative;
+      overflow:hidden;
+    }
+    .mast::after{
+      content:"";
+      position:absolute;
+      inset:-120px auto auto -80px;
+      width:360px;
+      height:220px;
+      background:radial-gradient(circle, #3bf7c238 0%, transparent 65%);
+      pointer-events:none;
     }
     h1 {
       margin:0;
       font-size:24px;
       letter-spacing:.02em;
-      font-family: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
-      color:#5b2c06;
+      font-family: "Orbitron", "Eurostile", "Bank Gothic", "JetBrains Mono", monospace;
+      color:var(--neon);
       text-transform:uppercase;
+      text-shadow:0 0 14px #00d08466, 0 0 28px #42ffd03d;
     }
-    .tag { margin-top:4px; color:#6f4b23; font-size:12px; }
+    .tag { margin-top:4px; color:#9ec7df; font-size:12px; }
     .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:10px; }
     .card {
-      background:linear-gradient(180deg, #fff5df, #f2e1bc);
-      border:1px solid #b28045;
+      background:linear-gradient(180deg, #101f33e8, var(--card));
+      border:1px solid var(--line);
       border-radius:12px;
       padding:10px;
       min-height:88px;
-      box-shadow:0 3px 10px #6d4d251f;
+      box-shadow:0 4px 16px #00000066, inset 0 0 0 1px #3df7d41a;
+      backdrop-filter: blur(2px);
     }
     .card.layout-edit {
       cursor:grab;
-      outline:2px dashed #9c5e08;
+      outline:2px dashed #27f0b6;
       outline-offset:-3px;
     }
     .card.layout-dragging {
@@ -109,12 +116,11 @@ function htmlPage() {
     .span-12{grid-column:span 12;}
     @media (max-width: 980px){
       .span-3,.span-4,.span-6,.span-12{grid-column:span 12;}
-      .bg-cast { display:none; }
     }
-    .k { color:#7a4a1f; font-size:11px; text-transform:uppercase; letter-spacing:.06em; font-weight:700; }
+    .k { color:var(--cyan); font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
     .v { margin-top:6px; font-size:16px; word-break:break-word; }
-    .small { margin-top:4px; color:#6f4b23; font-size:12px; }
-    .ok { color:#0f7a3f; } .bad { color:#a01823; } .warn { color:#9c5e08; }
+    .small { margin-top:4px; color:var(--muted); font-size:12px; }
+    .ok { color:#34ffa8; } .bad { color:#ff7a96; } .warn { color:#ffd166; }
     .badge {
       display:inline-block;
       padding:2px 8px;
@@ -122,33 +128,38 @@ function htmlPage() {
       font-size:11px;
       font-weight:600;
       letter-spacing:.02em;
-      border:1px solid #9f6a2f;
-      background:#f4dcae;
-      color:#654018;
+      border:1px solid #35597c;
+      background:#13223a;
+      color:#9ec3dc;
     }
-    .badge.ok { border-color:#0f7a3f; background:#d4f2e1; color:#0f7a3f; }
-    .badge.bad { border-color:#a01823; background:#f7dbdf; color:#a01823; }
-    .badge.warn { border-color:#9c5e08; background:#f8e4be; color:#9c5e08; }
-    .chart { width:100%; height:180px; display:block; margin-top:6px; border-radius:8px; background:#241b11; border:1px solid #8f5e2a; }
-    .legend { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; color:#6f4b23; font-size:11px; }
+    .badge.ok { border-color:#22c55e; background:#0a2a1a; color:#8ef0b5; }
+    .badge.bad { border-color:#ef4444; background:#300f18; color:#ff9db0; }
+    .badge.warn { border-color:#f59e0b; background:#38280b; color:#ffe198; }
+    .chart { width:100%; height:180px; display:block; margin-top:6px; border-radius:8px; background:#060f1c; border:1px solid #2e4f6f; }
+    .legend { display:flex; gap:10px; flex-wrap:wrap; margin-top:6px; color:#8fb3c8; font-size:11px; }
     .dot { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:4px; vertical-align:middle; }
     pre { margin:0; white-space:pre-wrap; word-break:break-word; max-height:220px; overflow:auto; }
     table { width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
-    th, td { border-bottom:1px solid #c1915880; padding:6px 4px; text-align:left; vertical-align:top; }
-    th { color:#7a4a1f; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+    th, td { border-bottom:1px solid #26435b80; padding:6px 4px; text-align:left; vertical-align:top; }
+    th { color:#88d1ff; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+    .btn{
+      margin-top:6px;
+      padding:5px 9px;
+      border:1px solid #35648a;
+      background:linear-gradient(180deg, #193553, #11243a);
+      color:#bff7ff;
+      border-radius:6px;
+      cursor:pointer;
+      box-shadow:inset 0 0 0 1px #50f5c222;
+    }
+    .btn:hover{ filter:brightness(1.08); }
   </style>
 </head>
 <body>
-  <div class="bg-cast" aria-hidden="true">
-    <div class="cast-card cast-a"><div class="name"><span class="avatar">L</span>Louis</div><div class="line">"Buy the gap, don't chase the noise."</div></div>
-    <div class="cast-card cast-b"><div class="name"><span class="avatar">B</span>Billy Ray</div><div class="line">"Take the profit when the catch-up prints."</div></div>
-    <div class="cast-card cast-c"><div class="name"><span class="avatar">M</span>Mortimer</div><div class="line">"No edge? No trade. Preserve the bankroll."</div></div>
-    <div class="cast-card cast-d"><div class="name"><span class="avatar">R</span>Randolph</div><div class="line">"Discipline beats drama. Flatten before the bell."</div></div>
-  </div>
   <div class="wrap">
     <div class="mast">
-      <h1>Trading Places: 5m Floor Tape</h1>
-      <div class="tag">Dan Aykroyd & Eddie Murphy vibe, modernized for live bot ops.</div>
+      <h1>Futuristic Money Machine</h1>
+      <div class="tag">Neon trading console for lag-detection, fast exits, and live risk visibility.</div>
     </div>
     <div class="grid" id="layoutGrid">
       <div class="card span-3"><div class="k">Process</div><div id="process" class="v"></div><div id="uptime" class="small"></div></div>
@@ -159,7 +170,7 @@ function htmlPage() {
       <div class="card span-4"><div class="k">Why No Trade</div><div id="whyNoTrade" class="v"></div><div id="whyNoTrade2" class="small"></div><div id="whyNoTrade3" class="small"></div></div>
       <div class="card span-4"><div class="k">Opportunity Replay</div><div id="replay" class="v"></div><div id="replay2" class="small"></div></div>
       <div class="card span-3"><div class="k">Dust Sweeper</div><div id="dust" class="v"></div><div id="dust2" class="small"></div><div id="dust3" class="small"></div><div id="dust4" class="small"></div></div>
-      <div class="card span-3"><div class="k">Redeemables</div><div id="redeemables" class="v"></div><div id="redeemables2" class="small"></div><button id="redeemNowBtn" style="margin-top:8px;padding:6px 10px;border:1px solid #8f5e2a;background:#f4dcae;color:#5a2f0c;border-radius:6px;cursor:pointer;">Redeem Now</button></div>
+      <div class="card span-3"><div class="k">Redeemables</div><div id="redeemables" class="v"></div><div id="redeemables2" class="small"></div><button id="redeemNowBtn" class="btn">Redeem Now</button></div>
 
       <div class="card span-6">
         <div class="k">Quote Vs Fair (Polymarket)</div>
@@ -210,7 +221,7 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Execution</div><div id="exec" class="v"></div><div id="exec2" class="small"></div></div>
       <div class="card span-3"><div class="k">Force Flatten</div><div id="flatten" class="v"></div><div id="flatten2" class="small"></div></div>
       <div class="card span-3"><div class="k">Portfolio</div><div id="portfolio" class="v"></div><div id="portfolio2" class="small"></div><div id="portfolio3" class="small"></div></div>
-      <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><br/><button id="layoutEditBtn" style="margin-top:6px;padding:4px 8px;border:1px solid #8f5e2a;background:#f4dcae;color:#5a2f0c;border-radius:6px;cursor:pointer;">Edit Layout</button> <button id="layoutResetBtn" style="margin-top:6px;padding:4px 8px;border:1px solid #8f5e2a;background:#f4dcae;color:#5a2f0c;border-radius:6px;cursor:pointer;">Reset</button><div id="controlMsg" class="small"></div></div></div>
+      <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><br/><button id="layoutEditBtn" class="btn">Edit Layout</button> <button id="layoutResetBtn" class="btn">Reset</button><div id="controlMsg" class="small"></div></div></div>
 
       <div class="card span-12"><div class="k">Recent Events</div><pre id="events"></pre></div>
       <div class="card span-12">
@@ -330,7 +341,7 @@ function htmlPage() {
       if (!c) return;
       const { ctx, w, h } = fit(c);
       ctx.clearRect(0,0,w,h);
-      ctx.fillStyle = "#241b11"; ctx.fillRect(0,0,w,h);
+      ctx.fillStyle = "#060d16"; ctx.fillRect(0,0,w,h);
       const pad = { l: 34, r: 8, t: 8, b: 20 };
       const innerW = w - pad.l - pad.r;
       const innerH = h - pad.t - pad.b;
@@ -362,7 +373,7 @@ function htmlPage() {
       const yPad = (max - min) * 0.06;
       min -= yPad; max += yPad;
 
-      ctx.strokeStyle = "#8f5e2a"; ctx.lineWidth = 1;
+      ctx.strokeStyle = "#27465f"; ctx.lineWidth = 1;
       for (let i=0;i<=4;i++){
         const y = pad.t + (innerH * i / 4);
         ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w-pad.r, y); ctx.stroke();
@@ -384,7 +395,7 @@ function htmlPage() {
         ctx.stroke();
       });
 
-      ctx.fillStyle = "#d7b989";
+      ctx.fillStyle = "#87b8d4";
       ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
       ctx.fillText(num(max, opts && opts.decimals !== undefined ? opts.decimals : 4), 3, pad.t + 8);
       ctx.fillText(num(min, opts && opts.decimals !== undefined ? opts.decimals : 4), 3, h - pad.b);
@@ -708,16 +719,22 @@ function htmlPage() {
           'plain English: ' + (topSkipPretty || '-');
 
         const r = s.redeemables || {};
+        const redeemReady = !!r.redeemReady;
         document.getElementById('redeemables').textContent =
           'enabled=' + (r.enabled ? 'yes' : 'no')
           + ' · total=' + (r.totalRedeemables ?? 0)
           + ' · redeemed=' + (r.redeemedCount ?? 0);
         document.getElementById('redeemables2').textContent =
           'claim=' + (r.claimAddress || '-')
+          + ' · txSigner=' + (r.redeemSignerAddress || '-')
+          + ' · ready=' + (redeemReady ? 'yes' : 'no')
+          + (r.redeemDisabledReason ? (' · blocked=' + r.redeemDisabledReason) : '')
           + ' · rpc=' + (r.activeRpcUrl || '-')
           + ' · inFlight=' + (r.inFlight ? 'yes' : 'no')
           + (r.lastRedeemTxHash ? (' · lastTx=' + r.lastRedeemTxHash) : '')
           + (r.lastError ? (' · err=' + r.lastError) : '');
+        const redeemBtn = document.getElementById('redeemNowBtn');
+        redeemBtn.disabled = redeemBusy || !redeemReady;
         const rows = (r.history || []).slice(0, 12).map(h =>
           '<tr>'
           + '<td>' + fmtTs(h.at) + '</td>'

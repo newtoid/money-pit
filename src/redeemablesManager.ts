@@ -18,6 +18,10 @@ type RedeemablesSnapshot = {
     enabled: boolean;
     addresses: string[];
     claimAddress: string | null;
+    configuredSignerAddress: string | null;
+    redeemSignerAddress: string | null;
+    redeemReady: boolean;
+    redeemDisabledReason: string | null;
     totalRedeemables: number;
     byAddress: Array<{ address: string; redeemables: number }>;
     lastScanAt: number | null;
@@ -49,6 +53,21 @@ function normalizeConditionId(id: string): string | null {
     if (s.startsWith("0x") && s.length === 66) return s;
     if (!s.startsWith("0x") && s.length === 64) return `0x${s}`;
     return null;
+}
+
+function normalizeAddress(addr: string | null | undefined): string | null {
+    const s = addr?.trim?.();
+    if (!s) return null;
+    return s.toLowerCase();
+}
+
+function addressFromPrivateKey(pk: string | null): string | null {
+    if (!pk) return null;
+    try {
+        return new Wallet(pk).address;
+    } catch {
+        return null;
+    }
 }
 
 function parseAddressList(raw: string | undefined, fallback: string[]): string[] {
@@ -104,27 +123,54 @@ export class RedeemablesManager {
     private readonly maxRedeemPerClick: number;
     private readonly addresses: string[];
     private readonly claimAddress: string | null;
-    private readonly privateKey: string | null;
+    private readonly redeemPrivateKey: string | null;
     private readonly rpcUrls: string[];
+    private readonly configuredSignerAddress: string | null;
+    private readonly redeemSignerAddress: string | null;
+    private readonly redeemDisabledReason: string | null;
     private readonly snapshot: RedeemablesSnapshot;
     private timer: NodeJS.Timeout | null = null;
     private inFlight = false;
     private rpcIndex = 0;
 
     constructor() {
-        const pk = process.env.PRIVATE_KEY?.trim() || null;
-        const signerAddress = (() => {
-            if (!pk) return null;
-            try { return new Wallet(pk).address; } catch { return null; }
-        })();
-        const claimAddress = (
-            process.env.CLAIM_ADDRESS
-            ?? process.env.TRADING_FUNDER_ADDRESS
+        const configuredPrivateKey = process.env.PRIVATE_KEY?.trim() || null;
+        const configuredSignerAddress = addressFromPrivateKey(configuredPrivateKey);
+        const redeemKeyCandidates = [
+            process.env.REDEEM_PRIVATE_KEY?.trim() || null,
+            process.env.TRADING_FUNDER_PRIVATE_KEY?.trim() || null,
+            process.env.POLYMARKET_FUNDER_PRIVATE_KEY?.trim() || null,
+            configuredPrivateKey,
+        ];
+        const keyedCandidates = redeemKeyCandidates
+            .map((pk) => ({ pk, address: addressFromPrivateKey(pk) }))
+            .filter((x) => Boolean(x.pk) && Boolean(x.address));
+        const funderAddress = (
+            process.env.TRADING_FUNDER_ADDRESS
             ?? process.env.POLYMARKET_FUNDER_ADDRESS
-            ?? signerAddress
             ?? null
         )?.toString().trim() || null;
-        const baseAddresses = [claimAddress, signerAddress].filter((x): x is string => Boolean(x));
+        const claimAddress = (
+            process.env.CLAIM_ADDRESS
+            ?? funderAddress
+            ?? keyedCandidates[0]?.address
+            ?? configuredSignerAddress
+            ?? null
+        )?.toString().trim() || null;
+        const normalizedClaim = normalizeAddress(claimAddress);
+        const matchedSigner = normalizedClaim
+            ? keyedCandidates.find((x) => normalizeAddress(x.address) === normalizedClaim) ?? null
+            : (keyedCandidates[0] ?? null);
+        const redeemPrivateKey = matchedSigner?.pk ?? null;
+        const redeemSignerAddress = matchedSigner?.address ?? null;
+        const redeemDisabledReason = (() => {
+            if (!claimAddress) return "Set CLAIM_ADDRESS (or TRADING_FUNDER_ADDRESS).";
+            if (!redeemPrivateKey) {
+                return "No private key matches CLAIM_ADDRESS. Set REDEEM_PRIVATE_KEY to that wallet key.";
+            }
+            return null;
+        })();
+        const baseAddresses = [claimAddress, configuredSignerAddress].filter((x): x is string => Boolean(x));
         const addressList = parseAddressList(process.env.REDEEMABLES_ADDRESSES, baseAddresses);
 
         this.enabled = (process.env.REDEEMABLES_ENABLED ?? "true").toLowerCase() !== "false";
@@ -132,13 +178,20 @@ export class RedeemablesManager {
         this.maxRedeemPerClick = Math.max(1, Number(process.env.REDEEM_NOW_MAX ?? "3"));
         this.addresses = addressList;
         this.claimAddress = claimAddress;
-        this.privateKey = pk;
+        this.redeemPrivateKey = redeemPrivateKey;
+        this.configuredSignerAddress = configuredSignerAddress;
+        this.redeemSignerAddress = redeemSignerAddress;
+        this.redeemDisabledReason = redeemDisabledReason;
         this.rpcUrls = parseRpcUrls();
 
         this.snapshot = {
             enabled: this.enabled,
             addresses: this.addresses,
             claimAddress: this.claimAddress,
+            configuredSignerAddress: this.configuredSignerAddress,
+            redeemSignerAddress: this.redeemSignerAddress,
+            redeemReady: !this.redeemDisabledReason,
+            redeemDisabledReason: this.redeemDisabledReason,
             totalRedeemables: 0,
             byAddress: [],
             lastScanAt: null,
@@ -198,16 +251,24 @@ export class RedeemablesManager {
         if (this.inFlight) {
             return { ok: false, error: "busy" };
         }
-        if (!this.privateKey || !this.claimAddress) {
-            const error = "missing_private_key_or_claim_address";
+        if (this.redeemDisabledReason) {
+            const error = `redeem_misconfigured: ${this.redeemDisabledReason}`;
             this.recordHistory({ ok: false, redeemed: 0, txHash: null, error });
+            this.snapshot.lastError = error;
+            return { ok: false, error };
+        }
+        const claimAddress = this.claimAddress;
+        if (!claimAddress) {
+            const error = "redeem_misconfigured: missing claim address";
+            this.recordHistory({ ok: false, redeemed: 0, txHash: null, error });
+            this.snapshot.lastError = error;
             return { ok: false, error };
         }
         this.inFlight = true;
         this.snapshot.inFlight = true;
         this.snapshot.lastError = null;
         try {
-            const cids = await fetchRedeemableConditions(this.claimAddress);
+            const cids = await fetchRedeemableConditions(claimAddress);
             if (!cids.length) {
                 this.recordHistory({ ok: true, redeemed: 0, txHash: null, error: null });
                 return { ok: true, redeemed: 0, reason: "no_redeemables" };
@@ -270,7 +331,7 @@ export class RedeemablesManager {
                     { url: rpcUrl, timeout: 15000 },
                     { chainId: 137, name: "matic" },
                 );
-                const signer = new Wallet(this.privateKey!, provider);
+                const signer = new Wallet(this.redeemPrivateKey!, provider);
                 const ctf = new ethers.Contract(CTF_ADDRESS, CTF_ABI, signer);
                 const tx = await ctf.redeemPositions(
                     USDC_ADDRESS,
