@@ -218,6 +218,7 @@ export class TradeEngine {
     private readonly entryEstimatedRoundTripCostBps = Math.max(0, getEnvNumber("ENTRY_ESTIMATED_ROUNDTRIP_COST_BPS", 12));
     private readonly entryExtraEdgeBufferBps = Math.max(0, getEnvNumber("ENTRY_EXTRA_EDGE_BUFFER_BPS", 2));
     private readonly entryMaxYesSpreadBps = Math.max(0, getEnvNumber("ENTRY_MAX_YES_SPREAD_BPS", 80));
+    private readonly entryMaxYesSpreadTicks = Math.max(0, getEnvNumber("ENTRY_MAX_YES_SPREAD_TICKS", 0));
     private readonly buyNoChaseWindowMs = Math.max(0, getEnvInt("BUY_NO_CHASE_WINDOW_MS", 4000));
     private readonly buyNoChaseMaxUpBps = Math.max(0, getEnvNumber("BUY_NO_CHASE_MAX_UP_BPS", 8));
     private readonly exitLayeredEnabled = getEnvBool("EXIT_LAYERED_ENABLED", true);
@@ -620,6 +621,14 @@ export class TradeEngine {
         return (spread / mid) * 10000;
     }
 
+    private currentYesSpreadTicks(): number | null {
+        const yes = this.books.get(this.yesTokenId);
+        if (!yes || yes.bid === null || yes.ask === null) return null;
+        const spread = yes.ask - yes.bid;
+        if (!Number.isFinite(spread) || spread < 0 || this.tickSize <= 0) return null;
+        return spread / this.tickSize;
+    }
+
     private rollingAvgCycleNetAfterFeesUsdc(): number | null {
         if (this.recentCycleNetAfterFeesUsdc.length === 0) return null;
         const sum = this.recentCycleNetAfterFeesUsdc.reduce((acc, x) => acc + x, 0);
@@ -777,7 +786,10 @@ export class TradeEngine {
             const maxLossBreached = this.maxLossPerMarketUsdc > 0
                 && (this.realizedPnlYes + this.unrealizedPnlYes()) <= -this.maxLossPerMarketUsdc;
             const yesSpreadBps = this.currentYesSpreadBps();
-            const spreadTooWide = yesSpreadBps !== null && yesSpreadBps > this.entryMaxYesSpreadBps;
+            const yesSpreadTicks = this.currentYesSpreadTicks();
+            const spreadTooWideBps = this.entryMaxYesSpreadBps > 0 && yesSpreadBps !== null && yesSpreadBps > this.entryMaxYesSpreadBps;
+            const spreadTooWideTicks = this.entryMaxYesSpreadTicks > 0 && yesSpreadTicks !== null && yesSpreadTicks > this.entryMaxYesSpreadTicks;
+            const spreadTooWide = spreadTooWideBps || spreadTooWideTicks;
             let effectiveBid = next.bid;
             let effectiveAsk = next.ask;
             let dustRecoveryShortSell = false;
@@ -884,7 +896,9 @@ export class TradeEngine {
                             estRoundTripCostBps: this.entryEstimatedRoundTripCostBps,
                             extraEdgeBufferBps: this.entryExtraEdgeBufferBps,
                             yesSpreadBps,
+                            yesSpreadTicks,
                             maxYesSpreadBps: this.entryMaxYesSpreadBps,
+                            maxYesSpreadTicks: this.entryMaxYesSpreadTicks,
                         },
                         riskMode: {
                             reason: riskMode.reason,
@@ -1053,7 +1067,9 @@ export class TradeEngine {
                             estRoundTripCostBps: this.entryEstimatedRoundTripCostBps,
                             extraEdgeBufferBps: this.entryExtraEdgeBufferBps,
                             yesSpreadBps,
+                            yesSpreadTicks,
                             maxYesSpreadBps: this.entryMaxYesSpreadBps,
+                            maxYesSpreadTicks: this.entryMaxYesSpreadTicks,
                         },
                         riskMode: {
                             reason: riskMode.reason,
@@ -1719,6 +1735,7 @@ export class TradeEngine {
                 estRoundTripCostBps: this.entryEstimatedRoundTripCostBps,
                 extraEdgeBufferBps: this.entryExtraEdgeBufferBps,
                 maxYesSpreadBps: this.entryMaxYesSpreadBps,
+                maxYesSpreadTicks: this.entryMaxYesSpreadTicks,
                 sessionMaxConsecutiveLosses: this.sessionMaxConsecutiveLosses,
                 sessionMaxNetLossUsdc: this.sessionMaxNetLossUsdc,
                 rollingExpectancyWindow: this.rollingExpectancyWindow,

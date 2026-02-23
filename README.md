@@ -57,7 +57,7 @@ npm run dev
 - `BUY_WINDOW_SEC` (buy entries allowed only in this many seconds from market open)
 - `BUY_MIN_LAG_BPS` (minimum lag edge required to open buys)
 - `ENTRY_ESTIMATED_ROUNDTRIP_COST_BPS`, `ENTRY_EXTRA_EDGE_BUFFER_BPS` (fee-adjusted lag requirement for entries)
-- `ENTRY_MAX_YES_SPREAD_BPS` (skip entries when spread is too wide)
+- `ENTRY_MAX_YES_SPREAD_BPS` and `ENTRY_MAX_YES_SPREAD_TICKS` (skip entries when spread is too wide; ticks is usually better with 1-cent markets)
 - `BUY_NO_CHASE_WINDOW_MS`, `BUY_NO_CHASE_MAX_UP_BPS` (skip buying into fast upward moves)
 - `MAX_LOSS_PER_MARKET_USDC` (stop new buys once market-level loss limit is breached)
 - `EXIT_LAYERED_ENABLED`, `EXIT_AGGRESSIVE_PCT`, `EXIT_AGGRESSIVE_TICKS` (faster two-step exits)
@@ -85,7 +85,7 @@ This is how the bot behaves during normal operation:
 - It does **not** place normal sell quotes right away
 - It requires fee-adjusted lag edge before buying (`BUY_MIN_LAG_BPS` + fee/buffer settings)
 - It can block "chasing" after a quick pop (`BUY_NO_CHASE_*`)
-- It can skip entries if spread is too wide (`ENTRY_MAX_YES_SPREAD_BPS`)
+- It can skip entries if spread is too wide (`ENTRY_MAX_YES_SPREAD_BPS` and/or `ENTRY_MAX_YES_SPREAD_TICKS`)
 
 3. After it has bought YES, it waits for Polystorm YES price to rise:
 - It records BTC move at buy time and waits for Polymarket implied move to catch up to that level

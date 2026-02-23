@@ -146,8 +146,9 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Market</div><div id="market" class="v"></div><div id="window" class="small"></div></div>
       <div class="card span-3"><div class="k">Connections</div><div id="conns" class="v"></div><div id="wsdetail" class="small"></div></div>
       <div class="card span-3"><div class="k">Signal</div><div id="signal" class="v"></div><div id="signal2" class="small"></div><div id="lagBadge" class="small"></div><div id="flattenBadge" class="small"></div></div>
-      <div class="card span-6"><div class="k">What Is Happening</div><div id="story" class="v"></div><div id="story2" class="small"></div></div>
-      <div class="card span-6"><div class="k">Opportunity Replay</div><div id="replay" class="v"></div><div id="replay2" class="small"></div></div>
+      <div class="card span-4"><div class="k">What Is Happening</div><div id="story" class="v"></div><div id="story2" class="small"></div></div>
+      <div class="card span-4"><div class="k">Why No Trade</div><div id="whyNoTrade" class="v"></div><div id="whyNoTrade2" class="small"></div></div>
+      <div class="card span-4"><div class="k">Opportunity Replay</div><div id="replay" class="v"></div><div id="replay2" class="small"></div></div>
       <div class="card span-3"><div class="k">Dust Sweeper</div><div id="dust" class="v"></div><div id="dust2" class="small"></div><div id="dust3" class="small"></div><div id="dust4" class="small"></div></div>
       <div class="card span-3"><div class="k">Redeemables</div><div id="redeemables" class="v"></div><div id="redeemables2" class="small"></div><button id="redeemNowBtn" style="margin-top:8px;padding:6px 10px;border:1px solid #8f5e2a;background:#f4dcae;color:#5a2f0c;border-radius:6px;cursor:pointer;">Redeem Now</button></div>
 
@@ -199,7 +200,7 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Quote</div><div id="quote" class="v"></div><div id="quote2" class="small"></div></div>
       <div class="card span-3"><div class="k">Execution</div><div id="exec" class="v"></div><div id="exec2" class="small"></div></div>
       <div class="card span-3"><div class="k">Force Flatten</div><div id="flatten" class="v"></div><div id="flatten2" class="small"></div></div>
-      <div class="card span-3"><div class="k">Portfolio</div><div id="portfolio" class="v"></div><div id="portfolio2" class="small"></div></div>
+      <div class="card span-3"><div class="k">Portfolio</div><div id="portfolio" class="v"></div><div id="portfolio2" class="small"></div><div id="portfolio3" class="small"></div></div>
       <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><br/><label><input type="checkbox" id="windowOverrideToggle" /> Override Trade Window</label><br/><small>Override ignores GMT buy window.</small><div id="controlMsg" class="small"></div></div></div>
 
       <div class="card span-12"><div class="k">Recent Events</div><pre id="events"></pre></div>
@@ -222,6 +223,9 @@ function htmlPage() {
     function num(v, d=4){ return (v === null || v === undefined || Number.isNaN(Number(v))) ? "-" : Number(v).toFixed(d); }
     function usd(v){ return (v === null || v === undefined || Number.isNaN(Number(v))) ? "-" : ("$" + Number(v).toFixed(2)); }
     function dlt(v){ if (v === null || v === undefined || Number.isNaN(Number(v))) return "-"; return (v >= 0 ? "+" : "") + "$" + Number(v).toFixed(2); }
+    function gateTag(label, ok){
+      return '<span class="badge ' + (ok ? 'ok' : 'bad') + '">' + label + ': ' + (ok ? 'OK' : 'BLOCKED') + '</span>';
+    }
     function dustReasonLabel(key){
       const map = {
         size_below_min_and_short_disabled: 'Too small and short-sell is off',
@@ -266,6 +270,9 @@ function htmlPage() {
       const spreadBps = (Number.isFinite(Number(q.ask)) && Number.isFinite(Number(q.bid)) && ((Number(q.ask) + Number(q.bid)) > 0))
         ? (((Number(q.ask) - Number(q.bid)) / ((Number(q.ask) + Number(q.bid)) / 2)) * 10000)
         : null;
+      const spreadTicks = (Number.isFinite(Number(q.ask)) && Number.isFinite(Number(q.bid)))
+        ? ((Number(q.ask) - Number(q.bid)) / 0.01)
+        : null;
       hist.push({
         t: Date.now(),
         fair: q.fairYes ?? null,
@@ -282,7 +289,9 @@ function htmlPage() {
         net: pnl.netYes ?? null,
         requiredLagBps: guards.requiredLagBps ?? null,
         maxYesSpreadBps: guards.maxYesSpreadBps ?? null,
+        maxYesSpreadTicks: guards.maxYesSpreadTicks ?? null,
         spreadBps,
+        spreadTicks,
         cashUsdc,
         inventoryUsdc,
         equityUsdc,
@@ -395,7 +404,9 @@ function htmlPage() {
         const p = hist[i];
         if (!inPos) {
           const lagOk = Number.isFinite(p.lagBps) && Number.isFinite(p.requiredLagBps) && p.lagBps >= p.requiredLagBps;
-          const spreadOk = !Number.isFinite(p.maxYesSpreadBps) || !Number.isFinite(p.spreadBps) || p.spreadBps <= p.maxYesSpreadBps;
+          const spreadOkBps = !Number.isFinite(p.maxYesSpreadBps) || p.maxYesSpreadBps <= 0 || !Number.isFinite(p.spreadBps) || p.spreadBps <= p.maxYesSpreadBps;
+          const spreadOkTicks = !Number.isFinite(p.maxYesSpreadTicks) || p.maxYesSpreadTicks <= 0 || !Number.isFinite(p.spreadTicks) || p.spreadTicks <= p.maxYesSpreadTicks;
+          const spreadOk = spreadOkBps && spreadOkTicks;
           const buyPrice = Number.isFinite(p.bid) ? p.bid : (Number.isFinite(p.fair) ? p.fair : null);
           if (lagOk && spreadOk && Number.isFinite(buyPrice)) {
             inPos = true;
@@ -560,6 +571,40 @@ function htmlPage() {
             : (lagOkNow ? 'Setup looks favorable: lag is above required edge.' : 'No strong edge now: waiting for better lag/spread.');
         document.getElementById('story2').textContent =
           'Rule: buy when BTC leads; sell when Polymarket catches up and price rises.';
+        const requiredLag = Number(e.entryGuards?.requiredLagBps ?? NaN);
+        const lagNow = Number(sig.lagBps ?? NaN);
+        const spreadNow = (Number.isFinite(Number(e.yesTop?.bid)) && Number.isFinite(Number(e.yesTop?.ask)) && (Number(e.yesTop.bid) + Number(e.yesTop.ask)) > 0)
+          ? ((Number(e.yesTop.ask) - Number(e.yesTop.bid)) / ((Number(e.yesTop.ask) + Number(e.yesTop.bid)) / 2)) * 10000
+          : NaN;
+        const maxSpread = Number(e.entryGuards?.maxYesSpreadBps ?? NaN);
+        const spreadTicksNow = (Number.isFinite(Number(e.yesTop?.bid)) && Number.isFinite(Number(e.yesTop?.ask)))
+          ? ((Number(e.yesTop.ask) - Number(e.yesTop.bid)) / 0.01)
+          : NaN;
+        const maxSpreadTicks = Number(e.entryGuards?.maxYesSpreadTicks ?? NaN);
+        const lagPass = Number.isFinite(lagNow) && Number.isFinite(requiredLag) && lagNow >= requiredLag;
+        const spreadPassBps = !(Number.isFinite(maxSpread) && maxSpread > 0 && Number.isFinite(spreadNow) && spreadNow > maxSpread);
+        const spreadPassTicks = !(Number.isFinite(maxSpreadTicks) && maxSpreadTicks > 0 && Number.isFinite(spreadTicksNow) && spreadTicksNow > maxSpreadTicks);
+        const spreadPass = spreadPassBps && spreadPassTicks;
+        const tradingPass = !!(controls.effectiveTradingEnabled ?? false);
+        const cooldownPass = !(Number(controls.cooldownMarketsRemaining ?? 0) > 0 || !!controls.cooldownActiveThisMarket);
+        const positionPass = !inPos;
+        const endWindowPass = !(!!ff.inWindow && !inPos);
+        document.getElementById('whyNoTrade').innerHTML =
+          gateTag('Lag', lagPass)
+          + ' '
+          + gateTag('Spread', spreadPass)
+          + ' '
+          + gateTag('Trading', tradingPass)
+          + ' '
+          + gateTag('Cooldown', cooldownPass)
+          + ' '
+          + gateTag('Flat', positionPass)
+          + ' '
+          + gateTag('End Window', endWindowPass);
+        document.getElementById('whyNoTrade2').textContent =
+          'lag=' + num(lagNow, 1) + ' vs required=' + num(requiredLag, 1)
+          + ' · spread=' + num(spreadNow, 1) + 'bps vs max=' + num(maxSpread, 1) + 'bps'
+          + ' · spreadTicks=' + num(spreadTicksNow, 2) + ' vs maxTicks=' + num(maxSpreadTicks, 2);
         const regime = Number(lagArb.regime ?? 0);
         const lagVal = sig.lagBps;
         const regimeLabel = regime > 0 ? 'BULLISH YES' : (regime < 0 ? 'BEARISH YES' : 'NEUTRAL');
@@ -683,10 +728,11 @@ function htmlPage() {
         const p15m = rollingDeltaSec('equityUsdc', 900);
 
         document.getElementById('portfolio').textContent =
-          'equity(est)=' + usd(equityUsdc)
-          + ' · cash=' + usd(cashUsdc)
-          + ' · inv(est)=' + usd(invUsdc);
+          'equity(est): ' + usd(equityUsdc);
         document.getElementById('portfolio2').textContent =
+          'cash: ' + usd(cashUsdc)
+          + ' · inventory(est): ' + usd(invUsdc);
+        document.getElementById('portfolio3').textContent =
           'rolling gains/losses: 1m ' + dlt(p1m)
           + ' · 5m ' + dlt(p5m)
           + ' · 15m ' + dlt(p15m)
