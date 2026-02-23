@@ -63,7 +63,6 @@ async function main() {
     let lastMarketNetAfterFeesUsdc: number | null = null;
     const controls = {
         tradingEnabled: env.TRADING_ENABLED,
-        overrideTradeWindow: false,
     };
     const marketLifecycle = {
         completed: 0,
@@ -178,7 +177,6 @@ async function main() {
         if (!active) return;
         const effectiveTradingEnabled = controls.tradingEnabled && !cooldownActiveThisMarket;
         active.engine.setTradingEnabled(effectiveTradingEnabled);
-        active.engine.setTradeWindowOverride(controls.overrideTradeWindow);
     };
 
     const finalizeActiveMarket = () => {
@@ -342,10 +340,6 @@ async function main() {
             if (typeof patch.tradingEnabled === "boolean") {
                 controls.tradingEnabled = patch.tradingEnabled;
                 pushEvent("control_trading_enabled", String(controls.tradingEnabled));
-            }
-            if (typeof patch.overrideTradeWindow === "boolean") {
-                controls.overrideTradeWindow = patch.overrideTradeWindow;
-                pushEvent("control_override_trade_window", String(controls.overrideTradeWindow));
             }
             applyControlsToActive();
             const effectiveTradingEnabled = controls.tradingEnabled && !cooldownActiveThisMarket;

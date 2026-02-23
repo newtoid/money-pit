@@ -43,8 +43,6 @@ npm run dev
 
 - `DRY_RUN=true`: decisions only, no orders posted
 - `TRADING_ENABLED=false`: disables live trading paths
-- `TRADE_WINDOW_ENABLED=true`: only allow new BUY entries inside a GMT time window
-- `TRADE_WINDOW_START_GMT=08:30`, `TRADE_WINDOW_END_GMT=10:30`: GMT window bounds (uses UTC clock)
 - `TRADING_USE_SIGNER_AS_MAKER=true`: signer acts as maker
 - `TRADING_USE_SIGNER_AS_MAKER=false`: uses funder/maker mode (`TRADING_FUNDER_ADDRESS`)
 
@@ -107,11 +105,7 @@ This is how the bot behaves during normal operation:
 - `BUY_WINDOW_SEC` controls how long new buys are allowed after market start (default `180` = first 3 minutes).
 - Sell/exit orders can still be placed after the buy window so inventory can be closed before expiry.
 
-7. Trades are also restricted by clock time (GMT):
-- With `TRADE_WINDOW_ENABLED=true`, the bot only opens new BUY entries between `TRADE_WINDOW_START_GMT` and `TRADE_WINDOW_END_GMT`.
-- Outside that GMT window, BUY entries are blocked, but SELL exits remain allowed.
-
-8. Session safety brakes:
+7. Session safety brakes:
 - If losing streak/session loss limits are hit, the bot pauses new buys (`SESSION_MAX_*`).
 - If rolling net after-fee round-trip expectancy degrades, it can reduce buy size or pause (`ROLLING_EXPECTANCY_*`).
 - If a market closes net-negative, it can skip the next N markets (`LOSS_COOLDOWN_MARKETS_AFTER_LOSS`).
@@ -258,12 +252,34 @@ Important tradeoff:
 - `leftoverMarkets`: number of markets that ended with leftover position.
 - `Controls` card:
   - `Trading Enabled`: live start/stop switch for order placement.
-  - `Override Trade Window`: ignores GMT buy window while ON (manual override).
   - `cooldown`: auto safety mode after a losing market; trading can show manual ON but effective OFF while cooldown is active.
 - `Opportunity Replay`:
   - Chart markers show possible past buy/sell sequences under current rules.
   - Green dots are potential buys, red dots are potential sells.
   - This is educational replay logic (price-based), not actual executed fills.
+
+### "Why No Trade" Terms (Plain English)
+
+The `Why No Trade` card shows gate badges as `OK` or `BLOCKED`.
+
+- `Lag`:
+  - `OK` means lag edge is strong enough to consider a buy.
+  - `BLOCKED` means BTC is not leading enough (or is leading the wrong way).
+- `Spread`:
+  - `OK` means bid/ask spread is within allowed limits.
+  - `BLOCKED` means market is too wide/expensive to enter safely.
+- `Trading`:
+  - `OK` means runtime trading switch is enabled.
+  - `BLOCKED` means manual stop or other runtime control is off.
+- `Cooldown`:
+  - `OK` means no post-loss cooldown is active.
+  - `BLOCKED` means bot is intentionally skipping markets after a loss.
+- `Flat`:
+  - `OK` means no open YES inventory (eligible to open a new buy).
+  - `BLOCKED` means already in a position and waiting to exit.
+- `End Window`:
+  - `OK` means market is not in buy-restricted near-expiry period.
+  - `BLOCKED` means new buys are disabled near market end.
 
 ## DRY_RUN With Full Metrics
 

@@ -167,16 +167,6 @@ function getEnvBool(name: string, fallback: boolean): boolean {
     return fallback;
 }
 
-function parseHhMmToMinutes(raw: string, fallback: number): number {
-    const m = /^(\d{1,2}):(\d{2})$/.exec(String(raw).trim());
-    if (!m) return fallback;
-    const hh = Number(m[1]);
-    const mm = Number(m[2]);
-    if (!Number.isFinite(hh) || !Number.isFinite(mm)) return fallback;
-    if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
-    return (hh * 60) + mm;
-}
-
 export class TradeEngine {
     private readonly marketId: string;
     private readonly tokenIds: string[];
@@ -239,9 +229,6 @@ export class TradeEngine {
             ? "guarantee_flat"
             : "protect_price"
     );
-    private readonly tradeWindowEnabled = getEnvBool("TRADE_WINDOW_ENABLED", true);
-    private readonly tradeWindowStartGmtMin = parseHhMmToMinutes(process.env.TRADE_WINDOW_START_GMT ?? "08:30", (8 * 60) + 30);
-    private readonly tradeWindowEndGmtMin = parseHhMmToMinutes(process.env.TRADE_WINDOW_END_GMT ?? "10:30", (10 * 60) + 30);
     private readonly sessionMaxConsecutiveLosses = Math.max(0, getEnvInt("SESSION_MAX_CONSECUTIVE_LOSSES", 3));
     private readonly sessionMaxNetLossUsdc = Math.max(0, getEnvNumber("SESSION_MAX_NET_LOSS_USDC", 10));
     private readonly estimatedFeeBps = Math.max(0, getEnvNumber("ESTIMATED_FEE_BPS", 100));
@@ -293,8 +280,6 @@ export class TradeEngine {
     private lastAllowanceSyncAttemptAt = 0;
     private lastPositionPollErrorAt = 0;
     private lastCancelAllAt = 0;
-    private lastWindowBuyCancelAt = 0;
-    private lastWindowBlockLogAt = 0;
     private lastOpenOrdersFetchAt = 0;
     private lastForceFlattenLogAt = 0;
     private readonly makerAddress: string | null;
@@ -318,7 +303,6 @@ export class TradeEngine {
     private activeCycleBuyNotionalUsdc = 0;
     private activeCycleSellNotionalUsdc = 0;
     private runtimeTradingEnabled: boolean;
-    private tradeWindowOverride = false;
 
     constructor(opts: EngineOpts) {
         this.marketId = opts.marketId;
@@ -341,11 +325,6 @@ export class TradeEngine {
                 logger.warn({ err, marketId: this.marketId }, "Cancel-all on trading disable failed");
             });
         }
-        void this.maybeQuote();
-    }
-
-    setTradeWindowOverride(enabled: boolean) {
-        this.tradeWindowOverride = enabled;
         void this.maybeQuote();
     }
 
@@ -599,18 +578,6 @@ export class TradeEngine {
         return bidTicks >= this.requoteTickThreshold || askTicks >= this.requoteTickThreshold;
     }
 
-    private isInGmtTradeWindow(now = new Date()): boolean {
-        if (this.tradeWindowOverride) return true;
-        if (!this.tradeWindowEnabled) return true;
-        const currentMin = (now.getUTCHours() * 60) + now.getUTCMinutes();
-        const start = this.tradeWindowStartGmtMin;
-        const end = this.tradeWindowEndGmtMin;
-        if (start <= end) {
-            return currentMin >= start && currentMin <= end;
-        }
-        return currentMin >= start || currentMin <= end;
-    }
-
     private currentYesSpreadBps(): number | null {
         const yes = this.books.get(this.yesTokenId);
         if (!yes || yes.bid === null || yes.ask === null) return null;
@@ -669,24 +636,9 @@ export class TradeEngine {
 
         const secondsSinceStart = this.secondsSinceMarketStart();
         const buyWindowActive = secondsSinceStart !== null && secondsSinceStart >= 0 && secondsSinceStart <= this.buyWindowSec;
-        const clockWindowActive = this.isInGmtTradeWindow();
         this.pushFairSample(fairYes);
 
         const secondsToEnd = this.secondsToMarketEnd();
-        if (!clockWindowActive) {
-            const now = Date.now();
-            if (now - this.lastWindowBlockLogAt >= 30000) {
-                this.lastWindowBlockLogAt = now;
-                logger.info(
-                    {
-                        marketId: this.marketId,
-                        startGmt: process.env.TRADE_WINDOW_START_GMT ?? "08:30",
-                        endGmt: process.env.TRADE_WINDOW_END_GMT ?? "10:30",
-                    },
-                    "Buy orders blocked outside GMT window (sell exits still allowed)",
-                );
-            }
-        }
 
         if (
             secondsToEnd !== null
@@ -751,18 +703,6 @@ export class TradeEngine {
         this.lastLagBpsDecision = lag.lagBps;
         const next = this.quoteFromFair(fairYes, lag.lagSkew);
         const immediateExit = this.priceRiseExitSignal().active || this.takeProfitSignal().active;
-        if (!clockWindowActive) {
-            const now = Date.now();
-            if (now - this.lastWindowBuyCancelAt >= 5000) {
-                this.lastWindowBuyCancelAt = now;
-                try {
-                    await this.cancelAllYesBuyOrders();
-                } catch (err) {
-                    this.state.orderErrors += 1;
-                    logger.error({ err, marketId: this.marketId }, "Cancel-all BUY orders outside GMT buy window failed");
-                }
-            }
-        }
         if (!immediateExit && !this.shouldRequote(next.bid, next.ask)) return;
 
         this.inFlight = true;
@@ -808,10 +748,6 @@ export class TradeEngine {
             if (noNewOrdersWindowActive) {
                 buySize = 0;
                 buyGateReason = "inside_no_new_orders_window";
-            }
-            if (!clockWindowActive) {
-                buySize = 0;
-                buyGateReason = "outside_gmt_buy_window";
             }
             if (!lagStrongEnough) {
                 buySize = 0;
@@ -1589,10 +1525,6 @@ export class TradeEngine {
         return String(o?.id ?? o?.orderID ?? o?.order_id ?? "");
     }
 
-    private orderSideFromRow(o: any): string {
-        return String(o?.side ?? o?.order?.side ?? "").toUpperCase();
-    }
-
     private async fetchOpenYesOrdersRows(): Promise<any[]> {
         if (!this.clobClient) return [];
         const now = Date.now();
@@ -1619,18 +1551,6 @@ export class TradeEngine {
         const orderIds = rows.map((o: any) => this.orderIdFromRow(o)).filter(Boolean);
         if (orderIds.length > 0) {
             await this.clobClient.cancelOrders(orderIds);
-        }
-    }
-
-    private async cancelAllYesBuyOrders() {
-        if (!this.clobClient) return;
-        const rows = await this.fetchOpenYesOrdersRows();
-        const buyOrderIds = rows
-            .filter((o: any) => this.orderSideFromRow(o) === "BUY")
-            .map((o: any) => this.orderIdFromRow(o))
-            .filter(Boolean);
-        if (buyOrderIds.length > 0) {
-            await this.clobClient.cancelOrders(buyOrderIds);
         }
     }
 
@@ -1709,7 +1629,6 @@ export class TradeEngine {
             dryRun: this.dryRun,
             tradingEnabled: this.runtimeTradingEnabled,
             configuredTradingEnabled: this.configuredTradingEnabled,
-            tradeWindowOverride: this.tradeWindowOverride,
             lagArb: {
                 enabled: this.lagArbEnabled,
                 regime: this.lagRegime,
@@ -1722,13 +1641,6 @@ export class TradeEngine {
                 exitCatchupBufferBps: this.exitCatchupBufferBps,
                 maxSkew: this.lagMaxSkew,
                 sizeMult: this.lagSizeMult,
-            },
-            tradeWindow: {
-                enabled: this.tradeWindowEnabled,
-                startGmt: process.env.TRADE_WINDOW_START_GMT ?? "08:30",
-                endGmt: process.env.TRADE_WINDOW_END_GMT ?? "10:30",
-                active: this.isInGmtTradeWindow(),
-                override: this.tradeWindowOverride,
             },
             entryGuards: {
                 requiredLagBps: this.buyMinLagBps + this.entryEstimatedRoundTripCostBps + this.entryExtraEdgeBufferBps,

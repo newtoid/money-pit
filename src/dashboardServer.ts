@@ -4,7 +4,7 @@ type DashboardServerOpts = {
     port: number;
     getState: () => unknown;
     onRedeemNow?: () => Promise<unknown>;
-    onSetControls?: (controls: { tradingEnabled?: boolean; overrideTradeWindow?: boolean }) => Promise<unknown> | unknown;
+    onSetControls?: (controls: { tradingEnabled?: boolean }) => Promise<unknown> | unknown;
     onError?: (err: unknown) => void;
     onListening?: (port: number) => void;
 };
@@ -94,6 +94,15 @@ function htmlPage() {
       min-height:88px;
       box-shadow:0 3px 10px #6d4d251f;
     }
+    .card.layout-edit {
+      cursor:grab;
+      outline:2px dashed #9c5e08;
+      outline-offset:-3px;
+    }
+    .card.layout-dragging {
+      opacity:.5;
+      transform:scale(.99);
+    }
     .span-3{grid-column:span 3;}
     .span-4{grid-column:span 4;}
     .span-6{grid-column:span 6;}
@@ -141,13 +150,13 @@ function htmlPage() {
       <h1>Trading Places: 5m Floor Tape</h1>
       <div class="tag">Dan Aykroyd & Eddie Murphy vibe, modernized for live bot ops.</div>
     </div>
-    <div class="grid">
+    <div class="grid" id="layoutGrid">
       <div class="card span-3"><div class="k">Process</div><div id="process" class="v"></div><div id="uptime" class="small"></div></div>
       <div class="card span-3"><div class="k">Market</div><div id="market" class="v"></div><div id="window" class="small"></div></div>
       <div class="card span-3"><div class="k">Connections</div><div id="conns" class="v"></div><div id="wsdetail" class="small"></div></div>
       <div class="card span-3"><div class="k">Signal</div><div id="signal" class="v"></div><div id="signal2" class="small"></div><div id="lagBadge" class="small"></div><div id="flattenBadge" class="small"></div></div>
       <div class="card span-4"><div class="k">What Is Happening</div><div id="story" class="v"></div><div id="story2" class="small"></div></div>
-      <div class="card span-4"><div class="k">Why No Trade</div><div id="whyNoTrade" class="v"></div><div id="whyNoTrade2" class="small"></div></div>
+      <div class="card span-4"><div class="k">Why No Trade</div><div id="whyNoTrade" class="v"></div><div id="whyNoTrade2" class="small"></div><div id="whyNoTrade3" class="small"></div></div>
       <div class="card span-4"><div class="k">Opportunity Replay</div><div id="replay" class="v"></div><div id="replay2" class="small"></div></div>
       <div class="card span-3"><div class="k">Dust Sweeper</div><div id="dust" class="v"></div><div id="dust2" class="small"></div><div id="dust3" class="small"></div><div id="dust4" class="small"></div></div>
       <div class="card span-3"><div class="k">Redeemables</div><div id="redeemables" class="v"></div><div id="redeemables2" class="small"></div><button id="redeemNowBtn" style="margin-top:8px;padding:6px 10px;border:1px solid #8f5e2a;background:#f4dcae;color:#5a2f0c;border-radius:6px;cursor:pointer;">Redeem Now</button></div>
@@ -201,7 +210,7 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Execution</div><div id="exec" class="v"></div><div id="exec2" class="small"></div></div>
       <div class="card span-3"><div class="k">Force Flatten</div><div id="flatten" class="v"></div><div id="flatten2" class="small"></div></div>
       <div class="card span-3"><div class="k">Portfolio</div><div id="portfolio" class="v"></div><div id="portfolio2" class="small"></div><div id="portfolio3" class="small"></div></div>
-      <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><br/><label><input type="checkbox" id="windowOverrideToggle" /> Override Trade Window</label><br/><small>Override ignores GMT buy window.</small><div id="controlMsg" class="small"></div></div></div>
+      <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><br/><button id="layoutEditBtn" style="margin-top:6px;padding:4px 8px;border:1px solid #8f5e2a;background:#f4dcae;color:#5a2f0c;border-radius:6px;cursor:pointer;">Edit Layout</button> <button id="layoutResetBtn" style="margin-top:6px;padding:4px 8px;border:1px solid #8f5e2a;background:#f4dcae;color:#5a2f0c;border-radius:6px;cursor:pointer;">Reset</button><div id="controlMsg" class="small"></div></div></div>
 
       <div class="card span-12"><div class="k">Recent Events</div><pre id="events"></pre></div>
       <div class="card span-12">
@@ -217,6 +226,9 @@ function htmlPage() {
     const HISTORY_MAX = 3600;
     const hist = [];
     let replay = { marks: [], cycles: 0, wins: 0, gross: 0, open: false };
+    const LAYOUT_KEY = 'pm5m_layout_order_v1';
+    let layoutEdit = false;
+    let draggingCard = null;
 
     function cls(ok) { return ok ? "ok" : "bad"; }
     function fmtTs(ts){ return ts ? new Date(ts).toLocaleTimeString() : "-"; }
@@ -463,6 +475,48 @@ function htmlPage() {
     let redeemBusy = false;
     let controlBusy = false;
 
+    function getGrid(){ return document.getElementById('layoutGrid'); }
+    function getCards(){ return Array.from(document.querySelectorAll('#layoutGrid > .card')); }
+    function ensureLayoutIds(){
+      const cards = getCards();
+      cards.forEach((c, i) => {
+        if (!c.dataset.cardId) c.dataset.cardId = 'card-' + i;
+      });
+    }
+    function saveLayoutOrder(){
+      const order = getCards().map(c => c.dataset.cardId).filter(Boolean);
+      localStorage.setItem(LAYOUT_KEY, JSON.stringify(order));
+    }
+    function loadLayoutOrder(){
+      ensureLayoutIds();
+      const grid = getGrid();
+      if (!grid) return;
+      const raw = localStorage.getItem(LAYOUT_KEY);
+      if (!raw) return;
+      let order = null;
+      try { order = JSON.parse(raw); } catch { order = null; }
+      if (!Array.isArray(order)) return;
+      const byId = new Map(getCards().map(c => [c.dataset.cardId, c]));
+      order.forEach((id) => {
+        const c = byId.get(id);
+        if (c) grid.appendChild(c);
+      });
+      getCards().forEach((c) => {
+        if (!order.includes(c.dataset.cardId)) grid.appendChild(c);
+      });
+    }
+    function setLayoutEditMode(on){
+      layoutEdit = !!on;
+      getCards().forEach((c) => {
+        c.draggable = layoutEdit;
+        c.classList.toggle('layout-edit', layoutEdit);
+      });
+      const btn = document.getElementById('layoutEditBtn');
+      if (btn) btn.textContent = layoutEdit ? 'Done' : 'Edit Layout';
+      const m = document.getElementById('controlMsg');
+      if (m) m.textContent = layoutEdit ? 'Layout edit mode: drag cards to reorder.' : '';
+    }
+
     async function redeemNow() {
       if (redeemBusy) return;
       redeemBusy = true;
@@ -492,10 +546,8 @@ function htmlPage() {
       if (controlBusy) return;
       controlBusy = true;
       const t = document.getElementById('tradingToggle');
-      const w = document.getElementById('windowOverrideToggle');
       const m = document.getElementById('controlMsg');
       t.disabled = true;
-      w.disabled = true;
       try {
         const res = await fetch('/api/control', {
           method: 'POST',
@@ -510,7 +562,6 @@ function htmlPage() {
       } finally {
         controlBusy = false;
         t.disabled = false;
-        w.disabled = false;
       }
     }
 
@@ -525,7 +576,6 @@ function htmlPage() {
         const sig = s.signal || {};
         const lagArb = (e && e.lagArb) ? e.lagArb : {};
         const ff = (e && e.forceFlatten) ? e.forceFlatten : {};
-        const tw = (e && e.tradeWindow) ? e.tradeWindow : {};
         const controls = s.controls || {};
 
         pushPoint(s);
@@ -540,9 +590,7 @@ function htmlPage() {
           + ' · creds=' + s.config.credsSource
           + ' · marketsClosed=' + (ml.completed ?? 0)
           + ' · flatOnHandoff=' + num(ml.flatRatePct, 1) + '%'
-          + ' · leftoverMarkets=' + (ml.leftoverAtHandoff ?? 0)
-          + ' · buyWindowGMT=' + (tw.enabled ? ((tw.active ? 'active' : 'blocked') + ' ' + (tw.startGmt || '-') + '-' + (tw.endGmt || '-')) : 'off')
-          + (tw.override ? ' · override=ON' : '');
+          + ' · leftoverMarkets=' + (ml.leftoverAtHandoff ?? 0);
 
         document.getElementById('market').textContent = (s.market.slug || '-') + ' | ' + (s.market.marketId || '-');
         document.getElementById('window').textContent = 'tokens=' + ((s.market.tokenIds || []).length) + ' · question=' + (s.market.question || '-');
@@ -605,6 +653,8 @@ function htmlPage() {
           'lag=' + num(lagNow, 1) + ' vs required=' + num(requiredLag, 1)
           + ' · spread=' + num(spreadNow, 1) + 'bps vs max=' + num(maxSpread, 1) + 'bps'
           + ' · spreadTicks=' + num(spreadTicksNow, 2) + ' vs maxTicks=' + num(maxSpreadTicks, 2);
+        document.getElementById('whyNoTrade3').textContent =
+          'Lag=edge signal · Spread=market width · Trading=master switch · Cooldown=post-loss pause · Flat=no open position · End Window=near-expiry buy restriction';
         const regime = Number(lagArb.regime ?? 0);
         const lagVal = sig.lagBps;
         const regimeLabel = regime > 0 ? 'BULLISH YES' : (regime < 0 ? 'BEARISH YES' : 'NEUTRAL');
@@ -756,12 +806,10 @@ function htmlPage() {
         document.getElementById('controls').textContent =
           'trading(effective)=' + ((controls.effectiveTradingEnabled ?? false) ? 'ON' : 'OFF')
           + ' · manual=' + ((controls.tradingEnabled ?? false) ? 'ON' : 'OFF')
-          + ' · override=' + ((controls.overrideTradeWindow ?? false) ? 'ON' : 'OFF')
           + ' · cooldown=' + ((controls.cooldownActiveThisMarket ?? false) ? 'ACTIVE' : 'off')
           + ' · cooldownLeft=' + (controls.cooldownMarketsRemaining ?? 0);
         if (!controlBusy) {
           document.getElementById('tradingToggle').checked = !!controls.tradingEnabled;
-          document.getElementById('windowOverrideToggle').checked = !!controls.overrideTradeWindow;
         }
 
         document.getElementById('events').textContent =
@@ -771,6 +819,8 @@ function htmlPage() {
       }
     }
 
+    loadLayoutOrder();
+    setLayoutEditMode(false);
     tick();
     setInterval(tick, 1000);
     window.addEventListener('resize', renderCharts);
@@ -779,10 +829,41 @@ function htmlPage() {
       const checked = !!(ev && ev.target && ev.target.checked);
       void setControlPatch({ tradingEnabled: checked });
     });
-    document.getElementById('windowOverrideToggle').addEventListener('change', (ev) => {
-      const checked = !!(ev && ev.target && ev.target.checked);
-      void setControlPatch({ overrideTradeWindow: checked });
+    document.getElementById('layoutEditBtn').addEventListener('click', () => {
+      setLayoutEditMode(!layoutEdit);
     });
+    document.getElementById('layoutResetBtn').addEventListener('click', () => {
+      localStorage.removeItem(LAYOUT_KEY);
+      location.reload();
+    });
+
+    const grid = getGrid();
+    if (grid) {
+      grid.addEventListener('dragstart', (ev) => {
+        if (!layoutEdit) return;
+        const card = ev.target && ev.target.closest ? ev.target.closest('.card') : null;
+        if (!card) return;
+        draggingCard = card;
+        card.classList.add('layout-dragging');
+        if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move';
+      });
+      grid.addEventListener('dragend', (ev) => {
+        const card = ev.target && ev.target.closest ? ev.target.closest('.card') : null;
+        if (card) card.classList.remove('layout-dragging');
+        draggingCard = null;
+        if (layoutEdit) saveLayoutOrder();
+      });
+      grid.addEventListener('dragover', (ev) => {
+        if (!layoutEdit || !draggingCard) return;
+        ev.preventDefault();
+        const target = ev.target && ev.target.closest ? ev.target.closest('.card') : null;
+        if (!target || target === draggingCard) return;
+        const rect = target.getBoundingClientRect();
+        const before = ev.clientY < (rect.top + rect.height / 2);
+        if (before) target.parentNode.insertBefore(draggingCard, target);
+        else target.parentNode.insertBefore(draggingCard, target.nextSibling);
+      });
+    }
   </script>
 </body>
 </html>`;
@@ -840,9 +921,8 @@ export function startDashboardServer(opts: DashboardServerOpts) {
                     res.end(JSON.stringify({ ok: false, error: "invalid_json" }));
                     return;
                 }
-                const controls: { tradingEnabled?: boolean; overrideTradeWindow?: boolean } = {};
+                const controls: { tradingEnabled?: boolean } = {};
                 if (typeof parsed?.tradingEnabled === "boolean") controls.tradingEnabled = parsed.tradingEnabled;
-                if (typeof parsed?.overrideTradeWindow === "boolean") controls.overrideTradeWindow = parsed.overrideTradeWindow;
                 void Promise.resolve(opts.onSetControls?.(controls))
                     .then((body) => {
                         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
