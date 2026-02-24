@@ -29,6 +29,32 @@ type ActiveRuntime = {
     marketWs: ReturnType<typeof createMarketWs>;
 };
 
+function normalizeMarketWindow(
+    mode: "5m" | "hourly_updown",
+    slug: string,
+    startUnixSec: number | null,
+    endUnixSec: number | null,
+): { startUnixSec: number | null; endUnixSec: number | null } {
+    if (mode === "5m") {
+        const derivedStart = deriveMarketStartUnixFromSlug(slug);
+        const start = startUnixSec ?? derivedStart;
+        const end = endUnixSec ?? (start !== null ? start + 300 : null);
+        return { startUnixSec: start, endUnixSec: end };
+    }
+
+    // Hourly Up/Down markets occasionally report stale startDate values.
+    // If end time is present, trust it and infer a 1-hour window.
+    if (endUnixSec !== null) {
+        const inferredStart = endUnixSec - 3600;
+        const startLooksWrong = startUnixSec === null || Math.abs(startUnixSec - inferredStart) > 1800;
+        if (startLooksWrong) {
+            return { startUnixSec: inferredStart, endUnixSec };
+        }
+    }
+
+    return { startUnixSec, endUnixSec };
+}
+
 function logEnvSummary() {
     logger.info("Starting bot");
     logger.info(
@@ -141,8 +167,14 @@ async function main() {
         marketId = latest.marketId;
         question = latest.question;
         tokenIds = latest.tokenIds;
-        marketStartUnixSec = latest.startUnixSec ?? deriveMarketStartUnixFromSlug(slug);
-        marketEndUnixSec = latest.endUnixSec ?? deriveMarketEndUnixFromSlug(slug);
+        const window = normalizeMarketWindow(
+            autoMarketMode,
+            slug,
+            latest.startUnixSec ?? deriveMarketStartUnixFromSlug(slug),
+            latest.endUnixSec ?? deriveMarketEndUnixFromSlug(slug),
+        );
+        marketStartUnixSec = window.startUnixSec;
+        marketEndUnixSec = window.endUnixSec;
     } else {
         logger.info({ slug: configuredSlug }, "Resolving market id from slug");
         const resolved = await resolveMarketIdFromSlug(configuredSlug!);
@@ -150,8 +182,14 @@ async function main() {
         marketId = resolved.marketId;
         question = resolved.question;
         tokenIds = resolved.tokenIds;
-        marketStartUnixSec = resolved.startUnixSec ?? deriveMarketStartUnixFromSlug(slug);
-        marketEndUnixSec = resolved.endUnixSec ?? deriveMarketEndUnixFromSlug(slug);
+        const window = normalizeMarketWindow(
+            autoMarketMode,
+            slug,
+            resolved.startUnixSec ?? deriveMarketStartUnixFromSlug(slug),
+            resolved.endUnixSec ?? deriveMarketEndUnixFromSlug(slug),
+        );
+        marketStartUnixSec = window.startUnixSec;
+        marketEndUnixSec = window.endUnixSec;
     }
 
     logger.info({ slug, marketId, question, tokenIds }, "Resolved market id");
@@ -541,16 +579,28 @@ async function main() {
                 marketId = latest.marketId;
                 question = latest.question;
                 tokenIds = latest.tokenIds;
-                marketStartUnixSec = latest.startUnixSec ?? deriveMarketStartUnixFromSlug(slug);
-                marketEndUnixSec = latest.endUnixSec ?? deriveMarketEndUnixFromSlug(slug);
+                const primaryWindow = normalizeMarketWindow(
+                    autoMarketMode,
+                    slug,
+                    latest.startUnixSec ?? deriveMarketStartUnixFromSlug(slug),
+                    latest.endUnixSec ?? deriveMarketEndUnixFromSlug(slug),
+                );
+                marketStartUnixSec = primaryWindow.startUnixSec;
+                marketEndUnixSec = primaryWindow.endUnixSec;
             }
+            const runtimeWindow = normalizeMarketWindow(
+                autoMarketMode,
+                latest.slug,
+                latest.startUnixSec ?? deriveMarketStartUnixFromSlug(latest.slug),
+                latest.endUnixSec ?? deriveMarketEndUnixFromSlug(latest.slug),
+            );
             startRuntime(a, {
                 slug: latest.slug,
                 marketId: latest.marketId,
                 question: latest.question,
                 tokenIds: latest.tokenIds,
-                marketStartUnixSec: latest.startUnixSec ?? deriveMarketStartUnixFromSlug(latest.slug),
-                marketEndUnixSec: latest.endUnixSec ?? deriveMarketEndUnixFromSlug(latest.slug),
+                marketStartUnixSec: runtimeWindow.startUnixSec,
+                marketEndUnixSec: runtimeWindow.endUnixSec,
             });
         }
     }
