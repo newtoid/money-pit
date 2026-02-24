@@ -992,53 +992,66 @@ export class TradeEngine {
                                 this.state.sellOrdersPlaced += 1;
                             }
                         } catch (err) {
-                            if (!this.isInsufficientBalanceOrAllowanceError(err)) throw err;
-                            logger.warn(
-                                {
-                                    marketId: this.marketId,
-                                    yesTokenId: this.yesTokenId,
-                                    attemptedSellSize: sellSize,
-                                    inventoryBeforeRetry: this.state.currentYesPosition,
-                                    err: err instanceof Error ? err.message : String(err),
-                                },
-                                "SELL rejected for balance/allowance; retrying after cancel+resync",
-                            );
-                            try {
-                                await this.cancelAllYesOrders();
-                            } catch {
-                                // best effort
-                            }
-                            await this.syncPositionFromDataApi(false);
-                            const retryPos = Math.max(0, this.state.currentYesPosition);
-                            const retrySize = this.normalizeOrderSize(Math.min(sellSize, retryPos), effectiveAsk, false);
-                            if (retrySize > 0) {
-                                if (exitSignal.active && this.exitUseMarketOnSignal) {
-                                    await this.clobClient.createAndPostMarketOrder(
-                                        {
-                                            tokenID: this.yesTokenId,
-                                            side: Side.SELL,
-                                            amount: retrySize,
-                                        },
-                                        { tickSize: String(this.tickSize) as any },
-                                        OrderType.FAK as any,
-                                    );
-                                } else {
-                                    await this.clobClient.createAndPostOrder(
-                                        {
-                                            tokenID: this.yesTokenId,
-                                            side: Side.SELL,
-                                            size: retrySize,
-                                            price: effectiveAsk,
-                                        },
-                                        { tickSize: String(this.tickSize) as any },
-                                        OrderType.GTC,
-                                    );
-                                }
-                                sellPlaced = true;
-                                this.state.sellOrdersPlaced += 1;
-                                sellSize = retrySize;
+                            if (!this.isInsufficientBalanceOrAllowanceError(err)) {
+                                this.state.orderErrors += 1;
+                                sellSkippedReason = "sell_post_failed";
+                                logger.error(
+                                    {
+                                        marketId: this.marketId,
+                                        yesTokenId: this.yesTokenId,
+                                        attemptedSellSize: sellSize,
+                                        err: err instanceof Error ? err.message : String(err),
+                                    },
+                                    "SELL post failed",
+                                );
                             } else {
-                                sellSkippedReason = "insufficient_yes_inventory_after_sync";
+                                logger.warn(
+                                    {
+                                        marketId: this.marketId,
+                                        yesTokenId: this.yesTokenId,
+                                        attemptedSellSize: sellSize,
+                                        inventoryBeforeRetry: this.state.currentYesPosition,
+                                        err: err instanceof Error ? err.message : String(err),
+                                    },
+                                    "SELL rejected for balance/allowance; retrying after cancel+resync",
+                                );
+                                try {
+                                    await this.cancelAllYesOrders();
+                                } catch {
+                                    // best effort
+                                }
+                                await this.syncPositionFromDataApi(false);
+                                const retryPos = Math.max(0, this.state.currentYesPosition);
+                                const retrySize = this.normalizeOrderSize(Math.min(sellSize, retryPos), effectiveAsk, false);
+                                if (retrySize > 0) {
+                                    if (exitSignal.active && this.exitUseMarketOnSignal) {
+                                        await this.clobClient.createAndPostMarketOrder(
+                                            {
+                                                tokenID: this.yesTokenId,
+                                                side: Side.SELL,
+                                                amount: retrySize,
+                                            },
+                                            { tickSize: String(this.tickSize) as any },
+                                            OrderType.FAK as any,
+                                        );
+                                    } else {
+                                        await this.clobClient.createAndPostOrder(
+                                            {
+                                                tokenID: this.yesTokenId,
+                                                side: Side.SELL,
+                                                size: retrySize,
+                                                price: effectiveAsk,
+                                            },
+                                            { tickSize: String(this.tickSize) as any },
+                                            OrderType.GTC,
+                                        );
+                                    }
+                                    sellPlaced = true;
+                                    this.state.sellOrdersPlaced += 1;
+                                    sellSize = retrySize;
+                                } else {
+                                    sellSkippedReason = "insufficient_yes_inventory_after_sync";
+                                }
                             }
                         }
                     } else {
