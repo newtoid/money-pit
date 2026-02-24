@@ -1,14 +1,17 @@
 # polymarket-5m-maker
 
-A TypeScript bot for Polymarket BTC 5-minute Up/Down markets.
+A TypeScript bot for Polymarket BTC/ETH Up/Down markets (auto-selected mode, or fixed `MARKET_SLUG`).
 
 What it does:
-- Resolves the latest BTC 5m market (or uses `MARKET_SLUG` if provided)
+- Auto-resolves market by mode:
+  - `AUTO_MARKET_MODE=5m` -> latest BTC 5m
+  - `AUTO_MARKET_MODE=hourly_updown` + `AUTO_MARKET_ASSET=btc|eth|sol|xrp` -> latest hourly Up/Down
+- Or uses fixed `MARKET_SLUG` if provided
 - Maintains live market/user websocket connections
 - Quotes YES-side orders around a fair value with risk controls
 - Applies optional lag-arbitrage bias using spot BTC vs Polymarket implied move
 - In bullish lag mode, follows a buy-first-then-sell-on-rise flow
-- Supports dust sweeping, redeemables scanning, and manual redeem from dashboard
+- Supports multi-market monitoring and per-asset trading toggles from dashboard
 
 ## Quick Start
 
@@ -24,6 +27,10 @@ npm install
   - `POLYMARKET_CLOB_API_KEY`
   - `POLYMARKET_CLOB_SECRET`
   - `POLYMARKET_CLOB_PASSPHRASE`
+- Optional:
+  - `AUTO_MARKET_MODE`, `AUTO_MARKET_ASSET` for automatic market selection
+  - `AUTO_MARKET_ASSETS` and `MULTI_MARKET_ENABLED=true` to trade multiple assets simultaneously
+  - `MARKET_SLUG` to lock bot to a specific market
 
 3. Run:
 ```bash
@@ -54,6 +61,7 @@ npm run dev
 - `HARD_TAKE_PROFIT_PCT` (always exit when gain reaches this level; default `0.5` = +50%)
 - `REQUOTE_TICK_THRESHOLD`, `MIN_REQUOTE_MS`, `FORCE_REQUOTE_MS`
 - `BUY_WINDOW_SEC` (buy entries allowed only in this many seconds from market open)
+- `LAG_TRADE_MODE` (`bullish_only`, `bearish_only`, `both`)
 - `BUY_MIN_LAG_BPS` (minimum lag edge required to open buys)
 - `ENTRY_ESTIMATED_ROUNDTRIP_COST_BPS`, `ENTRY_EXTRA_EDGE_BUFFER_BPS` (fee-adjusted lag requirement for entries)
 - `ENTRY_MAX_YES_SPREAD_BPS` and `ENTRY_MAX_YES_SPREAD_TICKS` (skip entries when spread is too wide; ticks is usually better with 1-cent markets)
@@ -71,6 +79,8 @@ npm run dev
 - `ESTIMATED_FEE_BPS`, `ROLLING_EXPECTANCY_WINDOW`, `ROLLING_EXPECTANCY_PAUSE_BELOW_USDC`, `ROLLING_EXPECTANCY_REDUCE_SIZE_*` (expectancy-based pause/size reduction)
 - `VENUE_MIN_ORDER_SIZE` (hard minimum size guard; default 5)
 - `CLOB_LEDGER_MIN_INTERVAL_MS` (throttle for `/data/orders` lookups)
+- `CANCEL_ALL_MIN_INTERVAL_MS` (throttle cancel-all cadence)
+- `OPEN_ORDERS_RATE_LIMIT_BACKOFF_MS` (backoff after 429 / Cloudflare 1015)
 - `NO_NEW_ORDERS_BEFORE_END`, `CANCEL_ALL_BEFORE_END`
 - `FORCE_FLATTEN_ENABLED`, `FORCE_FLATTEN_BEFORE_END_SEC`, `FORCE_FLATTEN_ALLOW_LOSS`, `FORCE_FLATTEN_MODE`, `FORCE_FLATTEN_HARD_DEADLINE_SEC`
 
@@ -176,27 +186,16 @@ Dashboard shows:
 Behavior note:
 - In `BULLISH YES`, strategy is buy-first then exit on Polystorm price rise.
 
-## Dust + Redeemables
+## Multi-Market Dashboard Controls
 
-Dust sweeper:
-- `DUST_SWEEPER_ENABLED`
-- `DUST_SWEEPER_INTERVAL_MS`
-- `DUST_SWEEPER_MAX_PER_CYCLE`
-- `DUST_SWEEPER_MAX_NOTIONAL_USDC`
-- `DUST_SWEEPER_ADDRESSES` (optional discovery list)
-
-Redeemables:
-- `REDEEMABLES_ENABLED`
-- `REDEEMABLES_SCAN_INTERVAL_MS`
-- `REDEEM_NOW_MAX`
-- `REDEEMABLES_ADDRESSES` (optional scan list)
-- `POLYGON_RPC_URL` (single provider)
-- `POLYGON_RPC_URLS` (optional comma-separated failover providers; preferred)
-- `CLAIM_ADDRESS` (wallet to redeem for; usually your funder wallet)
-- `REDEEM_PRIVATE_KEY` (optional dedicated redeem signer key; should match `CLAIM_ADDRESS`)
-
-Dashboard includes a `Redeem Now` button and redeem history table.
-If wallet/key mapping is wrong, dashboard now shows a plain-English `blocked=...` reason and disables `Redeem Now`.
+- `MULTI_MARKET_ENABLED=true`:
+  - runs one runtime per asset in `AUTO_MARKET_ASSETS`
+  - dashboard shows all active markets in `Markets In Use`
+- Asset toggles (`BTC/ETH/SOL/XRP`) in Controls:
+  - `ON`: trading allowed for that asset (subject to other risk gates)
+  - `OFF`: keep monitoring, but block new orders for that asset
+- Market selector (`View`) in Market card:
+  - switches charts/cards to the selected asset runtime
 
 ## Common Issues
 
@@ -204,11 +203,6 @@ If wallet/key mapping is wrong, dashboard now shows a plain-English `blocked=...
   - wallet collateral or allowance too low for configured quote size
 - Dashboard not updating after code changes:
   - another process may already be listening on `8787`
-- Redeem RPC errors:
-  - set valid `POLYGON_RPC_URLS` (or at least `POLYGON_RPC_URL`) provider endpoint(s)
-- Redeem button blocked / wallet mismatch:
-  - ensure `CLAIM_ADDRESS` is the wallet with redeemables
-  - ensure `REDEEM_PRIVATE_KEY` (or fallback key) derives to the same address
 
 ## FAQ (Plain English)
 
@@ -264,6 +258,8 @@ Important tradeoff:
 - `leftoverMarkets`: number of markets that ended with leftover position.
 - `Controls` card:
   - `Trading Enabled`: live start/stop switch for order placement.
+  - `Multi-Market`: run one market per configured asset instead of a single market.
+  - `BTC/ETH/SOL/XRP`: per-asset trading switches.
   - `cooldown`: auto safety mode after a losing market; trading can show manual ON but effective OFF while cooldown is active.
 - `Opportunity Replay`:
   - Chart markers show possible past buy/sell sequences under current rules.

@@ -6,15 +6,28 @@ import { createUserWs } from "./ws/userWs";
 import { createMarketWs } from "./ws/marketWs";
 import { logger } from "./logger";
 import {
+    type UpDownAsset,
     resolveLatestBtc5mMarket,
+    resolveLatestUpDownHourlyMarket,
     resolveMarketIdFromSlug,
 } from "./gamma/resolveMarketIdFromSlug";
 import { TradeEngine } from "./tradeEngine";
 import { startDashboardServer } from "./dashboardServer";
 import { runClobPreflight } from "./clobPreflight";
 import { SpotFeed } from "./spotFeed";
-import { DustSweeper } from "./dustSweeper";
-import { RedeemablesManager } from "./redeemablesManager";
+
+type ActiveRuntime = {
+    asset: UpDownAsset;
+    slug: string;
+    marketId: string;
+    question: string;
+    tokenIds: string[];
+    marketStartUnixSec: number | null;
+    marketEndUnixSec: number | null;
+    engine: TradeEngine;
+    userWs: ReturnType<typeof createUserWs>;
+    marketWs: ReturnType<typeof createMarketWs>;
+};
 
 function logEnvSummary() {
     logger.info("Starting bot");
@@ -25,6 +38,8 @@ function logEnvSummary() {
             passphrasePresent: Boolean(env.POLYMARKET_CLOB_PASSPHRASE),
             dryRun: env.DRY_RUN,
             marketSlugPresent: Boolean(env.MARKET_SLUG),
+            autoMarketMode: process.env.AUTO_MARKET_MODE ?? "5m",
+            autoMarketAsset: process.env.AUTO_MARKET_ASSET ?? "btc",
         },
         "Config",
     );
@@ -61,8 +76,16 @@ async function main() {
     let cooldownMarketsRemaining = 0;
     let cooldownActiveThisMarket = false;
     let lastMarketNetAfterFeesUsdc: number | null = null;
+    const defaultAssets: UpDownAsset[] = ["btc", "eth", "sol", "xrp"];
     const controls = {
         tradingEnabled: env.TRADING_ENABLED,
+        multiMarketEnabled: String(process.env.MULTI_MARKET_ENABLED ?? "false").trim().toLowerCase() === "true",
+        assetsEnabled: {
+            btc: true,
+            eth: true,
+            sol: true,
+            xrp: true,
+        } as Record<UpDownAsset, boolean>,
     };
     const marketLifecycle = {
         completed: 0,
@@ -73,6 +96,18 @@ async function main() {
     };
 
     const configuredSlug = env.MARKET_SLUG;
+    const autoMarketModeRaw = String(process.env.AUTO_MARKET_MODE ?? "5m").trim().toLowerCase();
+    const autoMarketMode: "5m" | "hourly_updown" = autoMarketModeRaw === "hourly_updown" ? "hourly_updown" : "5m";
+    const autoMarketAssetRaw = String(process.env.AUTO_MARKET_ASSET ?? "btc").trim().toLowerCase();
+    const autoMarketAsset: UpDownAsset = (["btc", "eth", "sol", "xrp"] as const).includes(autoMarketAssetRaw as any)
+        ? (autoMarketAssetRaw as UpDownAsset)
+        : "btc";
+    const autoMarketAssetsRaw = String(process.env.AUTO_MARKET_ASSETS ?? autoMarketAsset).trim().toLowerCase();
+    const parsedAssets = Array.from(new Set(autoMarketAssetsRaw.split(",").map((x) => x.trim()).filter(Boolean)))
+        .filter((x): x is UpDownAsset => (["btc", "eth", "sol", "xrp"] as const).includes(x as any));
+    const monitoredAssets: UpDownAsset[] = parsedAssets.length > 0 ? parsedAssets : defaultAssets;
+    for (const k of Object.keys(controls.assetsEnabled) as UpDownAsset[]) controls.assetsEnabled[k] = false;
+    for (const a of monitoredAssets) controls.assetsEnabled[a] = true;
     const slugUnix = configuredSlug?.match(/(\d+)$/)?.[1];
     const slugAgeSec = slugUnix ? Math.floor(Date.now() / 1000) - Number(slugUnix) : null;
     const useLatest = !configuredSlug || (slugAgeSec !== null && slugAgeSec > 900);
@@ -85,22 +120,29 @@ async function main() {
     let marketEndUnixSec: number | null = null;
     let marketOpenSpot: number | null = null;
 
+    const resolveLatestAutoMarket = async (asset: UpDownAsset = autoMarketAsset) => {
+        if (autoMarketMode === "hourly_updown") {
+            return resolveLatestUpDownHourlyMarket(asset);
+        }
+        return resolveLatestBtc5mMarket();
+    };
+
     if (useLatest) {
         if (!configuredSlug) {
-            logger.warn("MARKET_SLUG missing; auto-resolving latest BTC 5m market");
+            logger.warn({ autoMarketMode, autoMarketAsset }, "MARKET_SLUG missing; auto-resolving latest market");
         } else {
             logger.warn(
-                { configuredSlug, slugAgeSec },
-                "MARKET_SLUG appears stale; auto-resolving latest BTC 5m market",
+                { configuredSlug, slugAgeSec, autoMarketMode, autoMarketAsset },
+                "MARKET_SLUG appears stale; auto-resolving latest market",
             );
         }
-        const latest = await resolveLatestBtc5mMarket();
+        const latest = await resolveLatestAutoMarket();
         slug = latest.slug;
         marketId = latest.marketId;
         question = latest.question;
         tokenIds = latest.tokenIds;
-        marketStartUnixSec = deriveMarketStartUnixFromSlug(slug);
-        marketEndUnixSec = deriveMarketEndUnixFromSlug(slug);
+        marketStartUnixSec = latest.startUnixSec ?? deriveMarketStartUnixFromSlug(slug);
+        marketEndUnixSec = latest.endUnixSec ?? deriveMarketEndUnixFromSlug(slug);
     } else {
         logger.info({ slug: configuredSlug }, "Resolving market id from slug");
         const resolved = await resolveMarketIdFromSlug(configuredSlug!);
@@ -108,8 +150,8 @@ async function main() {
         marketId = resolved.marketId;
         question = resolved.question;
         tokenIds = resolved.tokenIds;
-        marketStartUnixSec = deriveMarketStartUnixFromSlug(slug);
-        marketEndUnixSec = deriveMarketEndUnixFromSlug(slug);
+        marketStartUnixSec = resolved.startUnixSec ?? deriveMarketStartUnixFromSlug(slug);
+        marketEndUnixSec = resolved.endUnixSec ?? deriveMarketEndUnixFromSlug(slug);
     }
 
     logger.info({ slug, marketId, question, tokenIds }, "Resolved market id");
@@ -162,64 +204,79 @@ async function main() {
     if (clobClient && !env.DRY_RUN && env.TRADING_ENABLED) {
         await runClobPreflight(clobClient);
     }
-    type ActiveRuntime = {
-        marketId: string;
-        tokenIds: string[];
-        marketStartUnixSec: number | null;
-        marketEndUnixSec: number | null;
-        engine: TradeEngine;
-        userWs: ReturnType<typeof createUserWs>;
-        marketWs: ReturnType<typeof createMarketWs>;
+    const runtimes = new Map<UpDownAsset, ActiveRuntime>();
+    let primaryAsset: UpDownAsset = autoMarketAsset;
+    const resolveTargetAssets = (): UpDownAsset[] => {
+        if (autoMarketMode === "5m") return ["btc"];
+        return controls.multiMarketEnabled ? monitoredAssets : [monitoredAssets[0] ?? autoMarketAsset];
     };
-    let active: ActiveRuntime | null = null;
+
+    const getPrimaryRuntime = (): ActiveRuntime | null => {
+        if (runtimes.has(primaryAsset)) return runtimes.get(primaryAsset)!;
+        const first = runtimes.values().next();
+        return first.done ? null : first.value;
+    };
 
     const applyControlsToActive = () => {
-        if (!active) return;
-        const effectiveTradingEnabled = controls.tradingEnabled && !cooldownActiveThisMarket;
-        active.engine.setTradingEnabled(effectiveTradingEnabled);
+        for (const rt of runtimes.values()) {
+            const effectiveTradingEnabled = controls.tradingEnabled && !!controls.assetsEnabled[rt.asset] && !cooldownActiveThisMarket;
+            rt.engine.setTradingEnabled(effectiveTradingEnabled);
+        }
     };
 
-    const finalizeActiveMarket = () => {
-        if (!active) return;
-        const snap = active.engine.getSnapshot();
-        const pos = Number(snap?.currentYesPosition ?? 0);
+    const finalizeRuntime = (rt: ActiveRuntime) => {
+        const snap = rt.engine.getSnapshot();
+        const pos = Number(snap?.currentYesPosition ?? 0) + Number((snap as any)?.currentNoPosition ?? 0);
         const netAfterFees = Number(snap?.pnl?.netAfterFeesSessionUsdc ?? NaN);
         lastMarketNetAfterFeesUsdc = Number.isFinite(netAfterFees) ? netAfterFees : null;
         marketLifecycle.completed += 1;
-        marketLifecycle.lastFinalizedMarketId = active.marketId;
+        marketLifecycle.lastFinalizedMarketId = rt.marketId;
         if (pos <= 0) {
             marketLifecycle.flatAtHandoff += 1;
         } else {
             marketLifecycle.leftoverAtHandoff += 1;
             marketLifecycle.leftoverSharesTotal += pos;
         }
-        if (lastMarketNetAfterFeesUsdc !== null && lastMarketNetAfterFeesUsdc < 0 && lossCooldownMarketsConfigured > 0) {
+        if (!controls.multiMarketEnabled && lastMarketNetAfterFeesUsdc !== null && lastMarketNetAfterFeesUsdc < 0 && lossCooldownMarketsConfigured > 0) {
             cooldownMarketsRemaining = Math.max(cooldownMarketsRemaining, lossCooldownMarketsConfigured);
             pushEvent("loss_cooldown_set", `${cooldownMarketsRemaining} market(s)`);
         }
     };
 
-    const stopActiveRuntime = () => {
-        if (!active) return;
-        finalizeActiveMarket();
-        active.userWs.stop();
-        active.marketWs.stop();
-        active.engine.stop();
-        active = null;
+    const stopRuntime = (asset: UpDownAsset) => {
+        const rt = runtimes.get(asset);
+        if (!rt) return;
+        finalizeRuntime(rt);
+        rt.userWs.stop();
+        rt.marketWs.stop();
+        rt.engine.stop();
+        runtimes.delete(asset);
+        wsState.user.connected = runtimes.size > 0;
+        wsState.market.connected = runtimes.size > 0;
+    };
+
+    const stopAllRuntimes = () => {
+        for (const asset of Array.from(runtimes.keys())) stopRuntime(asset);
         wsState.user.connected = false;
         wsState.market.connected = false;
     };
 
-    const startRuntime = (target: {
+    const startRuntime = (asset: UpDownAsset, target: {
+        slug: string;
         marketId: string;
+        question: string;
         tokenIds: string[];
         marketStartUnixSec: number | null;
         marketEndUnixSec: number | null;
     }) => {
-        cooldownActiveThisMarket = cooldownMarketsRemaining > 0;
-        if (cooldownActiveThisMarket) {
-            cooldownMarketsRemaining = Math.max(0, cooldownMarketsRemaining - 1);
-            pushEvent("loss_cooldown_skip_market", `${target.marketId} (${cooldownMarketsRemaining} left after this)`);
+        if (!controls.multiMarketEnabled) {
+            cooldownActiveThisMarket = cooldownMarketsRemaining > 0;
+            if (cooldownActiveThisMarket) {
+                cooldownMarketsRemaining = Math.max(0, cooldownMarketsRemaining - 1);
+                pushEvent("loss_cooldown_skip_market", `${target.marketId} (${cooldownMarketsRemaining} left after this)`);
+            }
+        } else {
+            cooldownActiveThisMarket = false;
         }
         const engine = new TradeEngine({
             marketId: target.marketId,
@@ -239,17 +296,16 @@ async function main() {
             onReconnect: () => {
                 wsState.user.reconnects += 1;
                 engine.onReconnect();
-                pushEvent("user_ws_reconnect");
+                pushEvent(`user_ws_reconnect_${asset}`);
             },
             onOpen: () => {
                 wsState.user.connected = true;
-                pushEvent("user_ws_open");
+                pushEvent(`user_ws_open_${asset}`);
             },
             onClose: (code, reason) => {
-                wsState.user.connected = false;
                 wsState.user.lastCloseCode = code;
                 wsState.user.lastCloseReason = reason;
-                pushEvent("user_ws_close", `${code} ${reason}`);
+                pushEvent(`user_ws_close_${asset}`, `${code} ${reason}`);
             },
         });
         const marketWs = createMarketWs({
@@ -261,29 +317,32 @@ async function main() {
             onReconnect: () => {
                 wsState.market.reconnects += 1;
                 engine.onReconnect();
-                pushEvent("market_ws_reconnect");
+                pushEvent(`market_ws_reconnect_${asset}`);
             },
             onOpen: () => {
                 wsState.market.connected = true;
-                pushEvent("market_ws_open");
+                pushEvent(`market_ws_open_${asset}`);
             },
             onClose: (code, reason) => {
-                wsState.market.connected = false;
                 wsState.market.lastCloseCode = code;
                 wsState.market.lastCloseReason = reason;
-                pushEvent("market_ws_close", `${code} ${reason}`);
+                pushEvent(`market_ws_close_${asset}`, `${code} ${reason}`);
             },
         });
 
-        active = {
+        runtimes.set(asset, {
+            asset,
+            slug: target.slug,
             marketId: target.marketId,
+            question: target.question,
             tokenIds: target.tokenIds,
             marketStartUnixSec: target.marketStartUnixSec,
             marketEndUnixSec: target.marketEndUnixSec,
             engine,
             userWs,
             marketWs,
-        };
+        });
+        primaryAsset = asset;
         applyControlsToActive();
 
         userWs.start();
@@ -308,19 +367,15 @@ async function main() {
             const spotMove = (marketOpenSpot !== null && marketOpenSpot > 0)
                 ? ((price - marketOpenSpot) / marketOpenSpot)
                 : null;
-            active?.engine.updateSpotSignal({
-                spotMoveBps: spotMove === null ? null : spotMove * 10000,
-                updatedAt: Date.now(),
-                connected: true,
-            });
+            for (const rt of runtimes.values()) {
+                rt.engine.updateSpotSignal({
+                    spotMoveBps: spotMove === null ? null : spotMove * 10000,
+                    updatedAt: Date.now(),
+                    connected: true,
+                });
+            }
         },
     });
-    const dustSweeper = new DustSweeper({
-        clobClient,
-        getActiveTokenIds: () => active?.tokenIds ?? [],
-    });
-    const redeemables = new RedeemablesManager();
-
     const dashboardServer = startDashboardServer({
         port: dashboardPort,
         onListening: (port) => logger.info({ dashboardPort: port }, "Dashboard available"),
@@ -335,11 +390,21 @@ async function main() {
             }
             logger.error({ err }, "Dashboard server error");
         },
-        onRedeemNow: async () => redeemables.redeemNow(),
         onSetControls: async (patch) => {
             if (typeof patch.tradingEnabled === "boolean") {
                 controls.tradingEnabled = patch.tradingEnabled;
                 pushEvent("control_trading_enabled", String(controls.tradingEnabled));
+            }
+            if (typeof (patch as any).multiMarketEnabled === "boolean") {
+                controls.multiMarketEnabled = Boolean((patch as any).multiMarketEnabled);
+                pushEvent("control_multi_market", String(controls.multiMarketEnabled));
+            }
+            const assetsPatch = (patch as any).assetsEnabled;
+            if (assetsPatch && typeof assetsPatch === "object") {
+                for (const a of Object.keys(controls.assetsEnabled) as UpDownAsset[]) {
+                    if (typeof assetsPatch[a] === "boolean") controls.assetsEnabled[a] = assetsPatch[a];
+                }
+                pushEvent("control_assets", JSON.stringify(controls.assetsEnabled));
             }
             applyControlsToActive();
             const effectiveTradingEnabled = controls.tradingEnabled && !cooldownActiveThisMarket;
@@ -356,7 +421,8 @@ async function main() {
         },
         getState: () => ({
             ...(function () {
-                const engine = active?.engine.getSnapshot() ?? null;
+                const primary = getPrimaryRuntime();
+                const engine = primary?.engine.getSnapshot() ?? null;
                 const spot = spotFeed.getSnapshot();
                 const fairYes = engine?.lastQuote?.fairYes ?? null;
                 const spotMove = (spot.price !== null && marketOpenSpot !== null && marketOpenSpot > 0)
@@ -378,10 +444,17 @@ async function main() {
                 const lagBps = (spotMove !== null && polymarketImpliedMove !== null)
                     ? (spotMove - polymarketImpliedMove) * 10000
                     : null;
+                const markets = Array.from(runtimes.values()).map((rt) => ({
+                    asset: rt.asset,
+                    slug: rt.slug,
+                    marketId: rt.marketId,
+                    question: rt.question,
+                    tokenIds: rt.tokenIds,
+                    engine: rt.engine.getSnapshot(),
+                }));
                 return {
                     engine,
-                    dustSweeper: dustSweeper.getSnapshot(),
-                    redeemables: redeemables.getSnapshot(),
+                    markets,
                     signal: {
                         spotPrice: spot.price,
                         spotUpdatedAt: spot.updatedAt,
@@ -413,6 +486,7 @@ async function main() {
             },
             config: {
                 dryRun: env.DRY_RUN,
+                signalK: Number(process.env.SIGNAL_K ?? "60"),
                 tradingEnabled: controls.tradingEnabled && !cooldownActiveThisMarket,
                 configuredTradingEnabled: env.TRADING_ENABLED,
                 tradingUseSignerAsMaker: env.TRADING_USE_SIGNER_AS_MAKER,
@@ -436,16 +510,64 @@ async function main() {
             performance: {
                 lastMarketNetAfterFeesUsdc,
             },
-            market: { slug, marketId, question, tokenIds },
+            market: (() => {
+                const p = getPrimaryRuntime();
+                return p
+                    ? { slug: p.slug, marketId: p.marketId, question: p.question, tokenIds: p.tokenIds, asset: p.asset }
+                    : { slug, marketId, question, tokenIds, asset: primaryAsset };
+            })(),
             ws: wsState,
             events: recentEvents,
         }),
     });
 
-    startRuntime({ marketId, tokenIds, marketStartUnixSec, marketEndUnixSec });
+    async function reconcileLatestRuntimes() {
+        const targetAssets = resolveTargetAssets();
+        const targetSet = new Set<UpDownAsset>(targetAssets);
+        for (const a of Array.from(runtimes.keys())) {
+            if (!targetSet.has(a)) stopRuntime(a);
+        }
+
+        for (const a of targetAssets) {
+            const latest = await resolveLatestAutoMarket(a);
+            const rt = runtimes.get(a);
+            if (rt && rt.marketId === latest.marketId) continue;
+            if (rt) {
+                pushEvent("market_rollover", `${rt.marketId} -> ${latest.marketId}`);
+                stopRuntime(a);
+            }
+            if (!runtimes.size) {
+                slug = latest.slug;
+                marketId = latest.marketId;
+                question = latest.question;
+                tokenIds = latest.tokenIds;
+                marketStartUnixSec = latest.startUnixSec ?? deriveMarketStartUnixFromSlug(slug);
+                marketEndUnixSec = latest.endUnixSec ?? deriveMarketEndUnixFromSlug(slug);
+            }
+            startRuntime(a, {
+                slug: latest.slug,
+                marketId: latest.marketId,
+                question: latest.question,
+                tokenIds: latest.tokenIds,
+                marketStartUnixSec: latest.startUnixSec ?? deriveMarketStartUnixFromSlug(latest.slug),
+                marketEndUnixSec: latest.endUnixSec ?? deriveMarketEndUnixFromSlug(latest.slug),
+            });
+        }
+    }
+
+    if (useLatest) {
+        await reconcileLatestRuntimes();
+    } else {
+        startRuntime(autoMarketAsset, {
+            slug,
+            marketId,
+            question,
+            tokenIds,
+            marketStartUnixSec,
+            marketEndUnixSec,
+        });
+    }
     spotFeed.start();
-    dustSweeper.start();
-    redeemables.start();
 
     const rolloverCheckMsRaw = Number(process.env.MARKET_ROLLOVER_CHECK_MS ?? "15000");
     const rolloverCheckMs = Number.isFinite(rolloverCheckMsRaw) ? Math.max(5000, Math.floor(rolloverCheckMsRaw)) : 15000;
@@ -454,31 +576,7 @@ async function main() {
     const maybeRolloverMarket = async () => {
         if (!useLatest) return;
         try {
-            const latest = await resolveLatestBtc5mMarket();
-            if (latest.marketId === marketId) return;
-
-            const prev = { slug, marketId };
-            slug = latest.slug;
-            marketId = latest.marketId;
-            question = latest.question;
-            tokenIds = latest.tokenIds;
-            marketStartUnixSec = deriveMarketStartUnixFromSlug(slug);
-            marketEndUnixSec = deriveMarketEndUnixFromSlug(slug);
-            marketOpenSpot = spotFeed.getSnapshot().price;
-
-            logger.info(
-                {
-                    from: prev,
-                    to: { slug, marketId },
-                    tokenIds,
-                    reason: "latest_5m_market_changed",
-                },
-                "Rolling bot to new market",
-            );
-            pushEvent("market_rollover", `${prev.marketId} -> ${marketId}`);
-
-            stopActiveRuntime();
-            startRuntime({ marketId, tokenIds, marketStartUnixSec, marketEndUnixSec });
+            await reconcileLatestRuntimes();
         } catch (err) {
             logger.warn({ err }, "Market rollover check failed");
         }
@@ -495,9 +593,7 @@ async function main() {
         if (rolloverTimer) clearInterval(rolloverTimer);
         rolloverTimer = null;
         spotFeed.stop();
-        dustSweeper.stop();
-        redeemables.stop();
-        stopActiveRuntime();
+        stopAllRuntimes();
         dashboardServer.close();
         process.exit(0);
     };

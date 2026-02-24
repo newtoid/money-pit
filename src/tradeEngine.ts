@@ -19,6 +19,7 @@ type QuoteState = {
     parsedBookUpdates: number;
     ignoredMarketMessages: number;
     currentYesPosition: number;
+    currentNoPosition: number;
     quoteCycles: number;
     skippedInsufficientCollateral: number;
     orderErrors: number;
@@ -197,6 +198,11 @@ export class TradeEngine {
     private readonly noNewOrdersBeforeEndSec = Math.max(0, getEnvInt("NO_NEW_ORDERS_BEFORE_END", 30));
     private readonly cancelAllBeforeEndSec = Math.max(0, getEnvInt("CANCEL_ALL_BEFORE_END", 15));
     private readonly lagArbEnabled = getEnvBool("LAG_ARB_ENABLED", true);
+    private readonly lagTradeMode: "bullish_only" | "bearish_only" | "both" = (() => {
+        const raw = String(process.env.LAG_TRADE_MODE ?? "both").trim().toLowerCase();
+        if (raw === "bullish_only" || raw === "bearish_only" || raw === "both") return raw;
+        return "both";
+    })();
     private readonly lagEnterBps = Math.max(0, getEnvNumber("LAG_ENTER_BPS", 4));
     private readonly lagExitBps = Math.max(0, getEnvNumber("LAG_EXIT_BPS", 2));
     private readonly lagMaxSkew = Math.max(0, getEnvNumber("MAX_LAG_SKEW", 0.01));
@@ -224,7 +230,10 @@ export class TradeEngine {
     private readonly exitFailsafeExtraTicks = Math.max(0, getEnvInt("EXIT_FAILSAFE_EXTRA_TICKS", 1));
     private readonly exitUseMarketOnSignal = getEnvBool("EXIT_USE_MARKET_ON_SIGNAL", true);
     private readonly maxLossPerMarketUsdc = Math.max(0, getEnvNumber("MAX_LOSS_PER_MARKET_USDC", 0));
-    private readonly clobLedgerMinIntervalMs = Math.max(0, getEnvInt("CLOB_LEDGER_MIN_INTERVAL_MS", 100));
+    private readonly clobLedgerMinIntervalMs = Math.max(0, getEnvInt("CLOB_LEDGER_MIN_INTERVAL_MS", 1000));
+    private readonly cancelAllMinIntervalMs = Math.max(0, getEnvInt("CANCEL_ALL_MIN_INTERVAL_MS", 1200));
+    private readonly openOrdersRateLimitBackoffMs = Math.max(1000, getEnvInt("OPEN_ORDERS_RATE_LIMIT_BACKOFF_MS", 12000));
+    private readonly decisionLogMinMs = Math.max(0, getEnvInt("DECISION_LOG_MIN_MS", 15000));
     private readonly forceFlattenEnabled = getEnvBool("FORCE_FLATTEN_ENABLED", true);
     private readonly forceFlattenBeforeEndSec = Math.max(0, getEnvInt("FORCE_FLATTEN_BEFORE_END_SEC", 40));
     private readonly forceFlattenHardDeadlineSec = Math.max(0, getEnvInt("FORCE_FLATTEN_HARD_DEADLINE_SEC", 5));
@@ -254,6 +263,7 @@ export class TradeEngine {
         parsedBookUpdates: 0,
         ignoredMarketMessages: 0,
         currentYesPosition: 0,
+        currentNoPosition: 0,
         quoteCycles: 0,
         skippedInsufficientCollateral: 0,
         orderErrors: 0,
@@ -272,6 +282,7 @@ export class TradeEngine {
     private inFlight = false;
     private lastQuote: LastQuote = null;
     private avgEntryPriceYes = 0;
+    private avgEntryPriceNo = 0;
     private entrySpotMoveTargetBps: number | null = null;
     private realizedPnlYes = 0;
     private lastFill: { at: number; tokenId: string; side: string; size: number; price: number } | null = null;
@@ -286,7 +297,13 @@ export class TradeEngine {
     private lastPositionPollErrorAt = 0;
     private lastCancelAllAt = 0;
     private lastOpenOrdersFetchAt = 0;
+    private lastCancelAllCallAt = 0;
+    private openOrdersRateLimitedUntil = 0;
+    private openYesOrdersCache: any[] = [];
+    private lastForceFlattenSyncWarnAt = 0;
     private lastForceFlattenLogAt = 0;
+    private readonly lastDecisionLogAt = new Map<string, number>();
+    private readonly lastDecisionLogFingerprint = new Map<string, string>();
     private readonly makerAddress: string | null;
     private readonly marketStartUnixSec: number | null;
     private readonly marketEndUnixSec: number | null;
@@ -601,6 +618,24 @@ export class TradeEngine {
         return spread / this.tickSize;
     }
 
+    private currentNoSpreadBps(): number | null {
+        const no = this.books.get(this.noTokenId);
+        if (!no || no.bid === null || no.ask === null) return null;
+        const mid = (no.bid + no.ask) / 2;
+        if (!Number.isFinite(mid) || mid <= 0) return null;
+        const spread = no.ask - no.bid;
+        if (!Number.isFinite(spread) || spread < 0) return null;
+        return (spread / mid) * 10000;
+    }
+
+    private currentNoSpreadTicks(): number | null {
+        const no = this.books.get(this.noTokenId);
+        if (!no || no.bid === null || no.ask === null) return null;
+        const spread = no.ask - no.bid;
+        if (!Number.isFinite(spread) || spread < 0 || this.tickSize <= 0) return null;
+        return spread / this.tickSize;
+    }
+
     private rollingAvgCycleNetAfterFeesUsdc(): number | null {
         if (this.recentCycleNetAfterFeesUsdc.length === 0) return null;
         const sum = this.recentCycleNetAfterFeesUsdc.reduce((acc, x) => acc + x, 0);
@@ -622,6 +657,23 @@ export class TradeEngine {
             return { pauseBuys: false, sizeMult: this.rollingExpectancyReduceSizeMult, reason: "rolling_expectancy_reduce_size", rollingAvg };
         }
         return { pauseBuys: false, sizeMult: 1, reason: null, rollingAvg };
+    }
+
+    private shouldLogDecision(channel: string, fingerprint: string): boolean {
+        const now = Date.now();
+        const lastAt = this.lastDecisionLogAt.get(channel) ?? 0;
+        const lastFingerprint = this.lastDecisionLogFingerprint.get(channel) ?? "";
+        if (this.decisionLogMinMs <= 0) {
+            this.lastDecisionLogAt.set(channel, now);
+            this.lastDecisionLogFingerprint.set(channel, fingerprint);
+            return true;
+        }
+        if (fingerprint !== lastFingerprint || now - lastAt >= this.decisionLogMinMs) {
+            this.lastDecisionLogAt.set(channel, now);
+            this.lastDecisionLogFingerprint.set(channel, fingerprint);
+            return true;
+        }
+        return false;
     }
 
     private normalizeOrderSize(size: number, price: number, isBuy: boolean): number {
@@ -706,6 +758,21 @@ export class TradeEngine {
 
         const lag = this.computeLagDecision(fairYes, secondsToEnd);
         this.lastLagBpsDecision = lag.lagBps;
+
+        const bearishModeEnabled = this.lagTradeMode === "both" || this.lagTradeMode === "bearish_only";
+        const bullishModeEnabled = this.lagTradeMode === "both" || this.lagTradeMode === "bullish_only";
+        if (
+            bearishModeEnabled
+            && (lag.lagMode === "bearish_yes" || this.state.currentNoPosition > 0)
+            && this.state.currentYesPosition <= 0
+        ) {
+            await this.maybeQuoteBearishNo(fairYes, lag, secondsSinceStart, secondsToEnd, noNewOrdersWindowActive);
+            return;
+        }
+        if (!bullishModeEnabled && this.state.currentYesPosition <= 0) {
+            return;
+        }
+
         const next = this.quoteFromFair(fairYes, lag.lagSkew);
         const immediateExit = this.hardTakeProfitSignal().active || this.priceRiseExitSignal().active || this.takeProfitSignal().active;
         if (!immediateExit && !this.shouldRequote(next.bid, next.ask)) return;
@@ -823,47 +890,59 @@ export class TradeEngine {
                     inventory: this.state.currentYesPosition,
                     mode: "dry_run",
                 };
-                logger.info(
-                    {
-                        marketId: this.marketId,
-                        yesTokenId: this.yesTokenId,
-                        fairYes,
-                        quote: { bid: effectiveBid, ask: effectiveAsk, skew: next.skew },
-                        lag: {
-                            enabled: this.lagArbEnabled,
-                            mode: lag.lagMode,
-                            bps: lag.lagBps,
-                            skew: lag.lagSkew,
-                            reason: lag.reason,
+                const decisionFingerprint = JSON.stringify({
+                    mode: this.runtimeTradingEnabled ? "dry_run" : "trading_disabled",
+                    lagMode: lag.lagMode,
+                    buySize,
+                    sellSize,
+                    buyGateReason,
+                    takeProfitActive: exitSignal.active,
+                    takeProfitReason: exitSignal.reason,
+                    noChase: noChase.reason,
+                });
+                if (this.shouldLogDecision("yes_quote_decision", decisionFingerprint)) {
+                    logger.info(
+                        {
+                            marketId: this.marketId,
+                            yesTokenId: this.yesTokenId,
+                            fairYes,
+                            quote: { bid: effectiveBid, ask: effectiveAsk, skew: next.skew },
+                            lag: {
+                                enabled: this.lagArbEnabled,
+                                mode: lag.lagMode,
+                                bps: lag.lagBps,
+                                skew: lag.lagSkew,
+                                reason: lag.reason,
+                            },
+                            feeAdjustedEntry: {
+                                requiredLagBps,
+                                estRoundTripCostBps: this.entryEstimatedRoundTripCostBps,
+                                extraEdgeBufferBps: this.entryExtraEdgeBufferBps,
+                                yesSpreadBps,
+                                yesSpreadTicks,
+                                maxYesSpreadBps: this.entryMaxYesSpreadBps,
+                                maxYesSpreadTicks: this.entryMaxYesSpreadTicks,
+                            },
+                            riskMode: {
+                                reason: riskMode.reason,
+                                rollingAvgCycleNetAfterFeesUsdc: riskMode.rollingAvg,
+                                sizeMult: riskMode.sizeMult,
+                            },
+                            orderSize: this.orderSize,
+                            buySize,
+                            sellSize,
+                            buyGateReason,
+                            noChaseJumpBps: noChase.jumpBps,
+                            tradingEnabled: this.runtimeTradingEnabled,
+                            inventory: this.state.currentYesPosition,
+                            takeProfitEnabled: this.takeProfitEnabled,
+                            hardTakeProfitPct: this.hardTakeProfitPct,
+                            takeProfitActive: exitSignal.active,
+                            takeProfitReason: exitSignal.reason,
                         },
-                        feeAdjustedEntry: {
-                            requiredLagBps,
-                            estRoundTripCostBps: this.entryEstimatedRoundTripCostBps,
-                            extraEdgeBufferBps: this.entryExtraEdgeBufferBps,
-                            yesSpreadBps,
-                            yesSpreadTicks,
-                            maxYesSpreadBps: this.entryMaxYesSpreadBps,
-                            maxYesSpreadTicks: this.entryMaxYesSpreadTicks,
-                        },
-                        riskMode: {
-                            reason: riskMode.reason,
-                            rollingAvgCycleNetAfterFeesUsdc: riskMode.rollingAvg,
-                            sizeMult: riskMode.sizeMult,
-                        },
-                        orderSize: this.orderSize,
-                        buySize,
-                        sellSize,
-                        buyGateReason,
-                        noChaseJumpBps: noChase.jumpBps,
-                        tradingEnabled: this.runtimeTradingEnabled,
-                        inventory: this.state.currentYesPosition,
-                        takeProfitEnabled: this.takeProfitEnabled,
-                        hardTakeProfitPct: this.hardTakeProfitPct,
-                        takeProfitActive: exitSignal.active,
-                        takeProfitReason: exitSignal.reason,
-                    },
-                    this.runtimeTradingEnabled ? "DRY_RUN quote decision" : "TRADING_DISABLED quote decision",
-                );
+                        this.runtimeTradingEnabled ? "DRY_RUN quote decision" : "TRADING_DISABLED quote decision",
+                    );
+                }
             } else {
                 await this.cancelAllYesOrders();
 
@@ -914,7 +993,7 @@ export class TradeEngine {
 
                 if (sellSize > 0) {
                     const synced = await this.syncPositionFromDataApi(false);
-                    const openRows = await this.fetchOpenYesOrdersRows(true);
+                        const openRows = await this.fetchOpenYesOrdersRows();
                     const reservedShares = this.sumOpenSellReservedShares(openRows);
                     const confirmedPos = Math.max(0, this.state.currentYesPosition - reservedShares);
                     if (!synced) {
@@ -1024,7 +1103,7 @@ export class TradeEngine {
                                     // best effort
                                 }
                                 await this.syncPositionFromDataApi(false);
-                                const retryRows = await this.fetchOpenYesOrdersRows(true);
+                                const retryRows = await this.fetchOpenYesOrdersRows();
                                 const retryReservedShares = this.sumOpenSellReservedShares(retryRows);
                                 const retryFreePos = Math.max(0, this.state.currentYesPosition - retryReservedShares);
                                 const retrySize = this.normalizeOrderSize(Math.min(sellSize, retryFreePos), effectiveAsk, false);
@@ -1156,13 +1235,14 @@ export class TradeEngine {
 
     private applyInventoryUpdateFromUserMessage(msg: unknown) {
         const events = Array.isArray(msg) ? msg : [msg];
-        let absolute: number | null = null;
+        let absoluteYes: number | null = null;
+        let absoluteNo: number | null = null;
 
         for (const event of events) {
             if (!event || typeof event !== "object") continue;
             const e: any = event;
             const tokenId = String(e.asset_id ?? e.assetId ?? e.token_id ?? e.tokenId ?? "");
-            if (tokenId && tokenId !== this.yesTokenId) continue;
+            if (tokenId && tokenId !== this.yesTokenId && tokenId !== this.noTokenId) continue;
 
             const absValue =
                 toNumber(e.position)
@@ -1170,19 +1250,21 @@ export class TradeEngine {
                 ?? toNumber(e.net_position)
                 ?? null;
             if (absValue !== null && tokenId === this.yesTokenId) {
-                absolute = absValue;
+                absoluteYes = absValue;
+            }
+            if (absValue !== null && tokenId === this.noTokenId) {
+                absoluteNo = absValue;
             }
         }
 
-        if (absolute !== null) {
-            this.state.currentYesPosition = absolute;
-        }
+        if (absoluteYes !== null) this.state.currentYesPosition = absoluteYes;
+        if (absoluteNo !== null) this.state.currentNoPosition = absoluteNo;
 
         for (const event of events) {
             if (!event || typeof event !== "object") continue;
             const e: any = event;
             const tokenId = String(e.asset_id ?? e.assetId ?? e.token_id ?? e.tokenId ?? "");
-            if (tokenId && tokenId !== this.yesTokenId) continue;
+            if (tokenId && tokenId !== this.yesTokenId && tokenId !== this.noTokenId) continue;
             const side = String(e.side ?? "").toUpperCase();
             const price = toNumber(e.price);
             const size = toNumber(e.size) ?? toNumber(e.matched_size) ?? toNumber(e.amount);
@@ -1193,7 +1275,11 @@ export class TradeEngine {
                 || eventType.includes("match");
             if (!isFillLike || price === null || size === null || size <= 0) continue;
             if (side !== "BUY" && side !== "SELL") continue;
-            this.onFill(side as "BUY" | "SELL", size, price);
+            if (tokenId === this.yesTokenId) {
+                this.onFill(side as "BUY" | "SELL", size, price);
+            } else if (tokenId === this.noTokenId) {
+                this.onFillNo(side as "BUY" | "SELL", size, price);
+            }
         }
     }
 
@@ -1246,17 +1332,26 @@ export class TradeEngine {
             if (!Array.isArray(rows)) return false;
 
             const yesToken = String(this.yesTokenId);
+            const noToken = String(this.noTokenId);
             let size = 0;
             let avg = 0;
+            let noSize = 0;
+            let noAvg = 0;
             for (const row of rows) {
-                if (String(row?.asset ?? "") !== yesToken) continue;
-                size = toNumber(row?.size) ?? 0;
-                avg = toNumber(row?.avgPrice) ?? 0;
-                break;
+                const asset = String(row?.asset ?? "");
+                if (asset === yesToken) {
+                    size = toNumber(row?.size) ?? 0;
+                    avg = toNumber(row?.avgPrice) ?? 0;
+                } else if (asset === noToken) {
+                    noSize = toNumber(row?.size) ?? 0;
+                    noAvg = toNumber(row?.avgPrice) ?? 0;
+                }
             }
 
             this.state.currentYesPosition = size;
             this.avgEntryPriceYes = size > 0 && avg > 0 ? avg : 0;
+            this.state.currentNoPosition = noSize;
+            this.avgEntryPriceNo = noSize > 0 && noAvg > 0 ? noAvg : 0;
             return true;
         } catch (err) {
             const now = Date.now();
@@ -1387,6 +1482,23 @@ export class TradeEngine {
         }
     }
 
+    private onFillNo(side: "BUY" | "SELL", size: number, price: number) {
+        if (side === "BUY") {
+            const pos = this.state.currentNoPosition;
+            const nextPos = pos + size;
+            if (nextPos > 0) {
+                this.avgEntryPriceNo = ((this.avgEntryPriceNo * pos) + (price * size)) / nextPos;
+            }
+            this.state.currentNoPosition = nextPos;
+            return;
+        }
+        const nextPos = this.state.currentNoPosition - size;
+        this.state.currentNoPosition = nextPos;
+        if (nextPos <= 0) {
+            this.avgEntryPriceNo = 0;
+        }
+    }
+
     private unrealizedPnlYes() {
         const fair = this.currentFairYes();
         if (fair === null) return 0;
@@ -1469,6 +1581,182 @@ export class TradeEngine {
         return { active: true, exitPrice, reason: "price_risen_after_bullish_tracker" };
     }
 
+    private noTakeProfitSignal(): { active: boolean; exitPrice: number; reason: string } {
+        if (!this.takeProfitEnabled) return { active: false, exitPrice: 0, reason: "disabled" };
+        if (this.state.currentNoPosition <= 0) return { active: false, exitPrice: 0, reason: "no_inventory" };
+        const no = this.books.get(this.noTokenId);
+        const bestBid = no?.bid ?? null;
+        if (bestBid === null || this.avgEntryPriceNo <= 0) return { active: false, exitPrice: 0, reason: "missing_bid_or_entry" };
+        const target = this.avgEntryPriceNo * (1 + this.takeProfitPct);
+        if (bestBid < target) return { active: false, exitPrice: 0, reason: "target_not_reached" };
+        const exitPrice = clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
+        return { active: true, exitPrice, reason: "triggered" };
+    }
+
+    private noHardTakeProfitSignal(): { active: boolean; exitPrice: number; reason: string } {
+        if (this.hardTakeProfitPct <= 0) return { active: false, exitPrice: 0, reason: "disabled" };
+        if (this.state.currentNoPosition <= 0) return { active: false, exitPrice: 0, reason: "no_inventory" };
+        const no = this.books.get(this.noTokenId);
+        const bestBid = no?.bid ?? null;
+        if (bestBid === null || this.avgEntryPriceNo <= 0) return { active: false, exitPrice: 0, reason: "missing_bid_or_entry" };
+        const hardTarget = this.avgEntryPriceNo * (1 + this.hardTakeProfitPct);
+        if (bestBid < hardTarget) return { active: false, exitPrice: 0, reason: "hard_target_not_reached" };
+        const exitPrice = clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
+        return { active: true, exitPrice, reason: "hard_take_profit_triggered" };
+    }
+
+    private noPriceRiseExitSignal(): { active: boolean; exitPrice: number; reason: string } {
+        if (this.state.currentNoPosition <= 0) return { active: false, exitPrice: 0, reason: "no_inventory" };
+        const no = this.books.get(this.noTokenId);
+        const bestBid = no?.bid ?? null;
+        if (bestBid === null || this.avgEntryPriceNo <= 0) return { active: false, exitPrice: 0, reason: "missing_bid_or_entry" };
+        const minProfitTarget = clampToTickBounds(
+            roundUpToTick(this.avgEntryPriceNo + (this.exitMinProfitTicks * this.tickSize), this.tickSize),
+            this.tickSize,
+        );
+        if (bestBid < minProfitTarget) return { active: false, exitPrice: 0, reason: "price_not_risen" };
+        const undercutCandidate = clampToTickBounds(
+            roundDownToTick(bestBid - (this.exitFastUndercutTicks * this.tickSize), this.tickSize),
+            this.tickSize,
+        );
+        const exitPrice = clampToTickBounds(Math.max(minProfitTarget, undercutCandidate), this.tickSize);
+        return { active: true, exitPrice, reason: "no_price_risen_after_bearish_tracker" };
+    }
+
+    private async maybeQuoteBearishNo(
+        fairYes: number,
+        lag: { lagBps: number | null; lagMode: "bullish_yes" | "bearish_yes" | "neutral" },
+        secondsSinceStart: number | null,
+        secondsToEnd: number | null,
+        noNewOrdersWindowActive: boolean,
+    ) {
+        const no = this.books.get(this.noTokenId);
+        if (!no || no.bid === null || no.ask === null) return;
+
+        const noFair = clampPrice(1 - fairYes);
+        const noBid = clampToTickBounds(roundDownToTick(no.bid, this.tickSize), this.tickSize);
+        const noAsk = clampToTickBounds(roundUpToTick(no.ask, this.tickSize), this.tickSize);
+        const buyWindowActive = secondsSinceStart !== null && secondsSinceStart >= 0 && secondsSinceStart <= this.buyWindowSec;
+        const requiredLagBps = this.buyMinLagBps + this.entryEstimatedRoundTripCostBps + this.entryExtraEdgeBufferBps;
+        const lagStrongEnough = lag.lagBps !== null && lag.lagBps <= -requiredLagBps;
+        const spreadBps = this.currentNoSpreadBps();
+        const spreadTicks = this.currentNoSpreadTicks();
+        const spreadTooWideBps = this.entryMaxYesSpreadBps > 0 && spreadBps !== null && spreadBps > this.entryMaxYesSpreadBps;
+        const spreadTooWideTicks = this.entryMaxYesSpreadTicks > 0 && spreadTicks !== null && spreadTicks > this.entryMaxYesSpreadTicks;
+        const spreadTooWide = spreadTooWideBps || spreadTooWideTicks;
+        const currentNoPos = this.state.currentNoPosition;
+        const remainingByPosition = Math.max(0, this.maxPosition - currentNoPos);
+        const remainingNotional = Math.max(0, this.maxInventoryNotionalUsdc - (currentNoPos * this.avgEntryPriceNo));
+        const remainingByNotional = noBid > 0 ? remainingNotional / noBid : 0;
+
+        let buySize = Math.max(0, Math.min(this.orderSize, remainingByPosition, remainingByNotional));
+        const hardExit = this.noHardTakeProfitSignal();
+        const riseExit = this.noPriceRiseExitSignal();
+        const tpExit = this.noTakeProfitSignal();
+        const exitSignal = hardExit.active ? hardExit : (riseExit.active ? riseExit : tpExit);
+        let sellSize = 0;
+        let buyGateReason: string | null = null;
+
+        if (!this.runtimeTradingEnabled || this.dryRun) {
+            // continue sizing/logging in DRY_RUN
+        }
+        if (this.state.currentYesPosition > 0) {
+            buySize = 0;
+            buyGateReason = "holding_yes_inventory";
+        }
+        if (!buyWindowActive) {
+            buySize = 0;
+            buyGateReason = "outside_buy_window";
+        }
+        if (noNewOrdersWindowActive) {
+            buySize = 0;
+            buyGateReason = "inside_no_new_orders_window";
+        }
+        if (!lagStrongEnough) {
+            buySize = 0;
+            buyGateReason = "lag_below_fee_adjusted_min_bearish";
+        }
+        if (spreadTooWide) {
+            buySize = 0;
+            buyGateReason = "spread_too_wide_for_no_entry";
+        }
+        if (exitSignal.active) {
+            buySize = 0;
+            sellSize = Math.max(0, currentNoPos);
+        }
+
+        buySize = this.normalizeOrderSize(buySize, noBid, true);
+        sellSize = this.normalizeOrderSize(sellSize, noAsk, false);
+
+        if (this.dryRun || !this.runtimeTradingEnabled || !this.clobClient) {
+            const decisionFingerprint = JSON.stringify({
+                mode: this.runtimeTradingEnabled ? "dry_run" : "trading_disabled",
+                req: Math.round(requiredLagBps),
+                buySize,
+                sellSize,
+                buyGateReason,
+                exitReason: exitSignal.reason,
+            });
+            if (this.shouldLogDecision("bearish_no_decision", decisionFingerprint)) {
+                logger.info(
+                    {
+                        marketId: this.marketId,
+                        noTokenId: this.noTokenId,
+                        mode: this.runtimeTradingEnabled ? "dry_run" : "trading_disabled",
+                        fairNo: noFair,
+                        lagBps: lag.lagBps,
+                        requiredLagBps,
+                        buySize,
+                        sellSize,
+                        buyGateReason,
+                        exitReason: exitSignal.reason,
+                    },
+                    "Bearish NO decision",
+                );
+            }
+            return;
+        }
+
+        if (buySize > 0) {
+            await this.clobClient.createAndPostOrder(
+                {
+                    tokenID: this.noTokenId,
+                    side: Side.BUY,
+                    size: buySize,
+                    price: noBid,
+                },
+                { tickSize: String(this.tickSize) as any },
+                OrderType.GTC,
+            );
+            this.state.buyOrdersPlaced += 1;
+        }
+        if (sellSize > 0) {
+            if (this.exitUseMarketOnSignal) {
+                await this.clobClient.createAndPostMarketOrder(
+                    {
+                        tokenID: this.noTokenId,
+                        side: Side.SELL,
+                        amount: sellSize,
+                    },
+                    { tickSize: String(this.tickSize) as any },
+                    OrderType.FAK as any,
+                );
+            } else {
+                await this.clobClient.createAndPostOrder(
+                    {
+                        tokenID: this.noTokenId,
+                        side: Side.SELL,
+                        size: sellSize,
+                        price: noAsk,
+                    },
+                    { tickSize: String(this.tickSize) as any },
+                    OrderType.GTC,
+                );
+            }
+            this.state.sellOrdersPlaced += 1;
+        }
+    }
+
     private pushFairSample(fairYes: number) {
         const now = Date.now();
         this.fairHistory.push({ at: now, fairYes });
@@ -1535,12 +1823,16 @@ export class TradeEngine {
 
         const synced = await this.syncPositionFromDataApi(false);
         if (!synced) {
-            logger.warn(
-                { marketId: this.marketId, yesTokenId: this.yesTokenId },
-                "Force-flatten position sync failed; using cached position",
-            );
+            const now = Date.now();
+            if (now - this.lastForceFlattenSyncWarnAt > 15000) {
+                logger.warn(
+                    { marketId: this.marketId, yesTokenId: this.yesTokenId },
+                    "Force-flatten position sync failed; using cached position",
+                );
+                this.lastForceFlattenSyncWarnAt = now;
+            }
         }
-        const openRows = await this.fetchOpenYesOrdersRows(true);
+        const openRows = await this.fetchOpenYesOrdersRows();
         const reservedShares = this.sumOpenSellReservedShares(openRows);
         const confirmedPos = Math.max(0, this.state.currentYesPosition - reservedShares);
         let sellSize = Math.min(currentPos, confirmedPos);
@@ -1625,7 +1917,7 @@ export class TradeEngine {
                 // best effort
             }
             await this.syncPositionFromDataApi(false);
-            const retryRows = await this.fetchOpenYesOrdersRows(true);
+            const retryRows = await this.fetchOpenYesOrdersRows();
             const retryReservedShares = this.sumOpenSellReservedShares(retryRows);
             const retryFreePos = Math.max(0, this.state.currentYesPosition - retryReservedShares);
             const retrySize = this.normalizeOrderSize(Math.min(sellSize, retryFreePos), candidateExit, false);
@@ -1784,29 +2076,65 @@ export class TradeEngine {
         return total;
     }
 
-    private async fetchOpenYesOrdersRows(force = false): Promise<any[]> {
+    private isRateLimitedOpenOrdersError(err: unknown): boolean {
+        const e: any = err as any;
+        const status = Number(e?.response?.status ?? NaN);
+        const dataMsg = String(e?.response?.data ?? "").toLowerCase();
+        const msg = String(e?.message ?? "").toLowerCase();
+        return (
+            status === 429
+            || dataMsg.includes("error 1015")
+            || dataMsg.includes("rate limit")
+            || msg.includes("429")
+            || msg.includes("error 1015")
+            || msg.includes("rate limit")
+        );
+    }
+
+    private async fetchOpenYesOrdersRows(force = false, useCacheOnSkip = true): Promise<any[]> {
         if (!this.clobClient) return [];
         const now = Date.now();
+        if (now < this.openOrdersRateLimitedUntil) {
+            return useCacheOnSkip ? this.openYesOrdersCache : [];
+        }
         if (!force && this.clobLedgerMinIntervalMs > 0 && now - this.lastOpenOrdersFetchAt < this.clobLedgerMinIntervalMs) {
-            return [];
+            return useCacheOnSkip ? this.openYesOrdersCache : [];
         }
         this.lastOpenOrdersFetchAt = now;
 
         try {
             const open = await this.clobClient.getOpenOrders({ asset_id: this.yesTokenId });
-            return this.parseOpenOrderRows(open);
+            const rows = this.parseOpenOrderRows(open);
+            this.openYesOrdersCache = rows;
+            return rows;
         } catch (err) {
+            if (this.isRateLimitedOpenOrdersError(err)) {
+                this.openOrdersRateLimitedUntil = Date.now() + this.openOrdersRateLimitBackoffMs;
+                logger.warn(
+                    {
+                        marketId: this.marketId,
+                        yesTokenId: this.yesTokenId,
+                        backoffMs: this.openOrdersRateLimitBackoffMs,
+                    },
+                    "getOpenOrders rate-limited; backing off",
+                );
+                return useCacheOnSkip ? this.openYesOrdersCache : [];
+            }
             logger.warn(
                 { err, marketId: this.marketId, yesTokenId: this.yesTokenId },
                 "getOpenOrders failed; skipping cancel-all for this cycle",
             );
-            return [];
+            return useCacheOnSkip ? this.openYesOrdersCache : [];
         }
     }
 
     private async cancelAllYesOrders() {
         if (!this.clobClient) return;
-        const rows = await this.fetchOpenYesOrdersRows(true);
+        const now = Date.now();
+        if (now < this.openOrdersRateLimitedUntil) return;
+        if (this.cancelAllMinIntervalMs > 0 && now - this.lastCancelAllCallAt < this.cancelAllMinIntervalMs) return;
+        this.lastCancelAllCallAt = now;
+        const rows = await this.fetchOpenYesOrdersRows(false, false);
         const orderIds = rows.map((o: any) => this.orderIdFromRow(o)).filter(Boolean);
         if (orderIds.length > 0) {
             await this.clobClient.cancelOrders(orderIds);
@@ -1838,6 +2166,7 @@ export class TradeEngine {
             },
             lastQuote: this.lastQuote,
             currentYesPosition: this.state.currentYesPosition,
+            currentNoPosition: this.state.currentNoPosition,
             counters: {
                 reconnects: this.state.reconnects,
                 marketMessages: this.state.marketMessages,
@@ -1867,6 +2196,7 @@ export class TradeEngine {
                     ? Number(this.lastCycleNetAfterFeesUsdc.toFixed(4))
                     : null,
                 avgEntryPriceYes: Number(this.avgEntryPriceYes.toFixed(6)),
+                avgEntryPriceNo: Number(this.avgEntryPriceNo.toFixed(6)),
                 inventoryNotionalUsdc: Number(this.inventoryNotionalUsdc().toFixed(4)),
                 avgEntryLagBps: this.state.entryCount > 0
                     ? Number((this.sumEntryLagBps / this.state.entryCount).toFixed(2))
