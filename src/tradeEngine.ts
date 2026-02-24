@@ -216,6 +216,7 @@ export class TradeEngine {
     private readonly entryExtraEdgeBufferBps = Math.max(0, getEnvNumber("ENTRY_EXTRA_EDGE_BUFFER_BPS", 2));
     private readonly entryMaxYesSpreadBps = Math.max(0, getEnvNumber("ENTRY_MAX_YES_SPREAD_BPS", 80));
     private readonly entryMaxYesSpreadTicks = Math.max(0, getEnvNumber("ENTRY_MAX_YES_SPREAD_TICKS", 0));
+    private readonly spreadTickEpsilon = 1e-9;
     private readonly buyNoChaseWindowMs = Math.max(0, getEnvInt("BUY_NO_CHASE_WINDOW_MS", 4000));
     private readonly buyNoChaseMaxUpBps = Math.max(0, getEnvNumber("BUY_NO_CHASE_MAX_UP_BPS", 8));
     private readonly exitLayeredEnabled = getEnvBool("EXIT_LAYERED_ENABLED", true);
@@ -803,7 +804,9 @@ export class TradeEngine {
             const yesSpreadBps = this.currentYesSpreadBps();
             const yesSpreadTicks = this.currentYesSpreadTicks();
             const spreadTooWideBps = this.entryMaxYesSpreadBps > 0 && yesSpreadBps !== null && yesSpreadBps > this.entryMaxYesSpreadBps;
-            const spreadTooWideTicks = this.entryMaxYesSpreadTicks > 0 && yesSpreadTicks !== null && yesSpreadTicks > this.entryMaxYesSpreadTicks;
+            const spreadTooWideTicks = this.entryMaxYesSpreadTicks > 0
+                && yesSpreadTicks !== null
+                && yesSpreadTicks > (this.entryMaxYesSpreadTicks + this.spreadTickEpsilon);
             const spreadTooWide = spreadTooWideBps || spreadTooWideTicks;
             let effectiveBid = next.bid;
             let effectiveAsk = next.ask;
@@ -1642,7 +1645,9 @@ export class TradeEngine {
         const spreadBps = this.currentNoSpreadBps();
         const spreadTicks = this.currentNoSpreadTicks();
         const spreadTooWideBps = this.entryMaxYesSpreadBps > 0 && spreadBps !== null && spreadBps > this.entryMaxYesSpreadBps;
-        const spreadTooWideTicks = this.entryMaxYesSpreadTicks > 0 && spreadTicks !== null && spreadTicks > this.entryMaxYesSpreadTicks;
+        const spreadTooWideTicks = this.entryMaxYesSpreadTicks > 0
+            && spreadTicks !== null
+            && spreadTicks > (this.entryMaxYesSpreadTicks + this.spreadTickEpsilon);
         const spreadTooWide = spreadTooWideBps || spreadTooWideTicks;
         const currentNoPos = this.state.currentNoPosition;
         const remainingByPosition = Math.max(0, this.maxPosition - currentNoPos);
