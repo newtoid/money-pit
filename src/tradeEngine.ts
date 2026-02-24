@@ -1681,7 +1681,6 @@ export class TradeEngine {
         const tpExit = this.noTakeProfitSignal();
         const exitSignal = hardExit.active ? hardExit : (riseExit.active ? riseExit : tpExit);
         let sellSize = 0;
-        let holdLossExitUntilFinalWindow = false;
         let buyGateReason: string | null = null;
 
         if (!this.runtimeTradingEnabled || this.dryRun) {
@@ -1711,15 +1710,6 @@ export class TradeEngine {
             buySize = 0;
             sellSize = Math.max(0, currentNoPos);
         }
-        if (
-            sellSize > 0
-            && this.avgEntryPriceNo > 0
-            && noAsk < this.avgEntryPriceNo
-            && !this.canExitAtLoss(secondsToEnd)
-        ) {
-            sellSize = 0;
-            holdLossExitUntilFinalWindow = true;
-        }
 
         buySize = this.normalizeOrderSize(buySize, noBid, true);
         sellSize = this.normalizeOrderSize(sellSize, noAsk, false);
@@ -1732,7 +1722,6 @@ export class TradeEngine {
                 sellSize,
                 buyGateReason,
                 exitReason: exitSignal.reason,
-                holdLossExitUntilFinalWindow,
             });
             if (this.shouldLogDecision("bearish_no_decision", decisionFingerprint)) {
                 logger.info(
@@ -1747,7 +1736,6 @@ export class TradeEngine {
                         sellSize,
                         buyGateReason,
                         exitReason: exitSignal.reason,
-                        holdLossExitUntilFinalWindow,
                     },
                     "Bearish NO decision",
                 );
@@ -1803,9 +1791,6 @@ export class TradeEngine {
             sellPlaced = true;
         } else {
             sellSkippedReason = exitSignal.active ? "no_no_inventory_to_exit" : "no_exit_signal";
-            if (holdLossExitUntilFinalWindow) {
-                sellSkippedReason = "hold_until_last_5m_no_loss_exit";
-            }
         }
 
         logger.info(
@@ -1835,7 +1820,6 @@ export class TradeEngine {
                 sellSkippedReason,
                 inventoryNo: this.state.currentNoPosition,
                 exitReason: exitSignal.reason,
-                holdLossExitUntilFinalWindow,
             },
             "Posted NO quote orders",
         );
