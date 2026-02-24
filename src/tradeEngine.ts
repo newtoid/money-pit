@@ -230,6 +230,7 @@ export class TradeEngine {
     private readonly exitFailsafeAfterFails = Math.max(1, getEnvInt("EXIT_FAILSAFE_AFTER_FAILS", 3));
     private readonly exitFailsafeExtraTicks = Math.max(0, getEnvInt("EXIT_FAILSAFE_EXTRA_TICKS", 1));
     private readonly exitUseMarketOnSignal = getEnvBool("EXIT_USE_MARKET_ON_SIGNAL", true);
+    private readonly exitAllowLossOnlyLastSec = Math.max(0, getEnvInt("EXIT_ALLOW_LOSS_ONLY_LAST_SEC", 300));
     private readonly maxLossPerMarketUsdc = Math.max(0, getEnvNumber("MAX_LOSS_PER_MARKET_USDC", 0));
     private readonly clobLedgerMinIntervalMs = Math.max(0, getEnvInt("CLOB_LEDGER_MIN_INTERVAL_MS", 1000));
     private readonly cancelAllMinIntervalMs = Math.max(0, getEnvInt("CANCEL_ALL_MIN_INTERVAL_MS", 1200));
@@ -677,6 +678,10 @@ export class TradeEngine {
         return false;
     }
 
+    private canExitAtLoss(secondsToEnd: number | null): boolean {
+        return secondsToEnd !== null && secondsToEnd <= this.exitAllowLossOnlyLastSec;
+    }
+
     private normalizeOrderSize(size: number, price: number, isBuy: boolean): number {
         if (!Number.isFinite(size) || size <= 0) return 0;
         const normalized = Math.floor(size * 100) / 100;
@@ -811,6 +816,7 @@ export class TradeEngine {
             let effectiveBid = next.bid;
             let effectiveAsk = next.ask;
             let dustRecoveryShortSell = false;
+            let holdLossExitUntilFinalWindow = false;
             let buyGateReason: string | null = null;
             let exitFailsafeActive = false;
 
@@ -876,6 +882,16 @@ export class TradeEngine {
                     dustRecoveryShortSell = true;
                 }
             }
+            if (
+                sellSize > 0
+                && this.avgEntryPriceYes > 0
+                && effectiveAsk < this.avgEntryPriceYes
+                && !this.canExitAtLoss(secondsToEnd)
+            ) {
+                // Hold through drawdown; only permit loss exits in final window.
+                sellSize = 0;
+                holdLossExitUntilFinalWindow = true;
+            }
 
             buySize = this.normalizeOrderSize(buySize, effectiveBid, true);
             sellSize = this.normalizeOrderSize(sellSize, effectiveAsk, false);
@@ -902,6 +918,7 @@ export class TradeEngine {
                     takeProfitActive: exitSignal.active,
                     takeProfitReason: exitSignal.reason,
                     noChase: noChase.reason,
+                    holdLossExitUntilFinalWindow,
                 });
                 if (this.shouldLogDecision("yes_quote_decision", decisionFingerprint)) {
                     logger.info(
@@ -942,6 +959,7 @@ export class TradeEngine {
                             hardTakeProfitPct: this.hardTakeProfitPct,
                             takeProfitActive: exitSignal.active,
                             takeProfitReason: exitSignal.reason,
+                            holdLossExitUntilFinalWindow,
                         },
                         this.runtimeTradingEnabled ? "DRY_RUN quote decision" : "TRADING_DISABLED quote decision",
                     );
@@ -1151,7 +1169,9 @@ export class TradeEngine {
                         this.consecutiveExitFailures += 1;
                     }
                 } else {
-                    if (exitSignal.active && currentPos > 0 && currentPos < this.minOrderSize) {
+                    if (holdLossExitUntilFinalWindow) {
+                        sellSkippedReason = "hold_until_last_5m_no_loss_exit";
+                    } else if (exitSignal.active && currentPos > 0 && currentPos < this.minOrderSize) {
                         sellSkippedReason = "tp_inventory_below_min_order_size";
                     } else if (currentPos > 0) {
                         sellSkippedReason = "waiting_for_price_rise_exit";
@@ -1216,6 +1236,7 @@ export class TradeEngine {
                         takeProfitReason: exitSignal.reason,
                         exitUseMarketOnSignal: this.exitUseMarketOnSignal,
                         exitFailsafeActive,
+                        holdLossExitUntilFinalWindow,
                         dustRecoveryShortSell,
                         buySkippedReason,
                         sellSkippedReason,
@@ -1660,6 +1681,7 @@ export class TradeEngine {
         const tpExit = this.noTakeProfitSignal();
         const exitSignal = hardExit.active ? hardExit : (riseExit.active ? riseExit : tpExit);
         let sellSize = 0;
+        let holdLossExitUntilFinalWindow = false;
         let buyGateReason: string | null = null;
 
         if (!this.runtimeTradingEnabled || this.dryRun) {
@@ -1689,6 +1711,15 @@ export class TradeEngine {
             buySize = 0;
             sellSize = Math.max(0, currentNoPos);
         }
+        if (
+            sellSize > 0
+            && this.avgEntryPriceNo > 0
+            && noAsk < this.avgEntryPriceNo
+            && !this.canExitAtLoss(secondsToEnd)
+        ) {
+            sellSize = 0;
+            holdLossExitUntilFinalWindow = true;
+        }
 
         buySize = this.normalizeOrderSize(buySize, noBid, true);
         sellSize = this.normalizeOrderSize(sellSize, noAsk, false);
@@ -1701,6 +1732,7 @@ export class TradeEngine {
                 sellSize,
                 buyGateReason,
                 exitReason: exitSignal.reason,
+                holdLossExitUntilFinalWindow,
             });
             if (this.shouldLogDecision("bearish_no_decision", decisionFingerprint)) {
                 logger.info(
@@ -1715,6 +1747,7 @@ export class TradeEngine {
                         sellSize,
                         buyGateReason,
                         exitReason: exitSignal.reason,
+                        holdLossExitUntilFinalWindow,
                     },
                     "Bearish NO decision",
                 );
@@ -1770,6 +1803,9 @@ export class TradeEngine {
             sellPlaced = true;
         } else {
             sellSkippedReason = exitSignal.active ? "no_no_inventory_to_exit" : "no_exit_signal";
+            if (holdLossExitUntilFinalWindow) {
+                sellSkippedReason = "hold_until_last_5m_no_loss_exit";
+            }
         }
 
         logger.info(
@@ -1799,6 +1835,7 @@ export class TradeEngine {
                 sellSkippedReason,
                 inventoryNo: this.state.currentNoPosition,
                 exitReason: exitSignal.reason,
+                holdLossExitUntilFinalWindow,
             },
             "Posted NO quote orders",
         );
