@@ -906,10 +906,19 @@ export class TradeEngine {
                 }
 
                 if (sellSize > 0) {
-                    await this.syncPositionFromDataApi(false);
-                    const confirmedPos = Math.max(0, this.state.currentYesPosition);
-                    sellSize = Math.min(sellSize, confirmedPos);
-                    sellSize = this.normalizeOrderSize(sellSize, effectiveAsk, false);
+                    const synced = await this.syncPositionFromDataApi(false);
+                    if (!synced) {
+                        sellSkippedReason = "position_sync_failed";
+                        sellSize = 0;
+                        if (exitSignal.active && currentPos > 0) this.consecutiveExitFailures += 1;
+                    } else {
+                        const openRows = await this.fetchOpenYesOrdersRows(true);
+                        const reservedShares = this.sumOpenSellReservedShares(openRows);
+                        const freeShares = Math.max(0, this.state.currentYesPosition - reservedShares);
+                        const confirmedPos = Math.max(0, freeShares);
+                        sellSize = Math.min(sellSize, confirmedPos);
+                        sellSize = this.normalizeOrderSize(sellSize, effectiveAsk, false);
+                    }
 
                     if (sellSize > 0) {
                         try {
@@ -1196,8 +1205,8 @@ export class TradeEngine {
         return msg.includes("not enough balance / allowance") || dataMsg.includes("not enough balance / allowance");
     }
 
-    private async syncPositionFromDataApi(triggerRequote: boolean) {
-        if (!this.makerAddress || !this.yesTokenId) return;
+    private async syncPositionFromDataApi(triggerRequote: boolean): Promise<boolean> {
+        if (!this.makerAddress || !this.yesTokenId) return false;
         try {
             const url = `https://data-api.polymarket.com/positions?user=${encodeURIComponent(this.makerAddress)}&sizeThreshold=0`;
             const res = await fetch(url);
@@ -1213,10 +1222,10 @@ export class TradeEngine {
                     );
                     this.lastPositionPollErrorAt = now;
                 }
-                return;
+                return false;
             }
             const rows = (await res.json()) as PositionRow[];
-            if (!Array.isArray(rows)) return;
+            if (!Array.isArray(rows)) return false;
 
             const yesToken = String(this.yesTokenId);
             let size = 0;
@@ -1230,6 +1239,7 @@ export class TradeEngine {
 
             this.state.currentYesPosition = size;
             this.avgEntryPriceYes = size > 0 && avg > 0 ? avg : 0;
+            return true;
         } catch (err) {
             const now = Date.now();
             if (now - this.lastPositionPollErrorAt > 15000) {
@@ -1242,9 +1252,11 @@ export class TradeEngine {
                 );
                 this.lastPositionPollErrorAt = now;
             }
+            return false;
         } finally {
             if (triggerRequote) void this.maybeQuote();
         }
+        return false;
     }
 
     private async refreshPositionFromDataApi() {
@@ -1474,8 +1486,17 @@ export class TradeEngine {
             return;
         }
 
-        await this.syncPositionFromDataApi(false);
-        const confirmedPos = Math.max(0, this.state.currentYesPosition);
+        const synced = await this.syncPositionFromDataApi(false);
+        if (!synced) {
+            logger.warn(
+                { marketId: this.marketId, yesTokenId: this.yesTokenId },
+                "Force-flatten skipped: position sync failed",
+            );
+            return;
+        }
+        const openRows = await this.fetchOpenYesOrdersRows(true);
+        const reservedShares = this.sumOpenSellReservedShares(openRows);
+        const confirmedPos = Math.max(0, this.state.currentYesPosition - reservedShares);
         let sellSize = Math.min(currentPos, confirmedPos);
         let dustRecoveryShortSell = false;
         if (
@@ -1694,10 +1715,30 @@ export class TradeEngine {
         return String(o?.id ?? o?.orderID ?? o?.order_id ?? "");
     }
 
-    private async fetchOpenYesOrdersRows(): Promise<any[]> {
+    private remainingSellSizeFromOrderRow(o: any): number {
+        const side = String(o?.side ?? "").toUpperCase();
+        if (side !== "SELL") return 0;
+        const original = toNumber(o?.original_size);
+        const matched = toNumber(o?.size_matched);
+        if (original !== null && matched !== null) {
+            return Math.max(0, original - matched);
+        }
+        const size = toNumber(o?.size);
+        return Math.max(0, size ?? 0);
+    }
+
+    private sumOpenSellReservedShares(rows: any[]): number {
+        let total = 0;
+        for (const row of rows) {
+            total += this.remainingSellSizeFromOrderRow(row);
+        }
+        return total;
+    }
+
+    private async fetchOpenYesOrdersRows(force = false): Promise<any[]> {
         if (!this.clobClient) return [];
         const now = Date.now();
-        if (this.clobLedgerMinIntervalMs > 0 && now - this.lastOpenOrdersFetchAt < this.clobLedgerMinIntervalMs) {
+        if (!force && this.clobLedgerMinIntervalMs > 0 && now - this.lastOpenOrdersFetchAt < this.clobLedgerMinIntervalMs) {
             return [];
         }
         this.lastOpenOrdersFetchAt = now;
@@ -1716,7 +1757,7 @@ export class TradeEngine {
 
     private async cancelAllYesOrders() {
         if (!this.clobClient) return;
-        const rows = await this.fetchOpenYesOrdersRows();
+        const rows = await this.fetchOpenYesOrdersRows(true);
         const orderIds = rows.map((o: any) => this.orderIdFromRow(o)).filter(Boolean);
         if (orderIds.length > 0) {
             await this.clobClient.cancelOrders(orderIds);
