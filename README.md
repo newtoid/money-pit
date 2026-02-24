@@ -51,6 +51,7 @@ npm run dev
 - `ORDER_SIZE`, `HALF_SPREAD`
 - `MAX_POSITION`, `MAX_INVENTORY_NOTIONAL_USDC`
 - `TAKE_PROFIT_ENABLED`, `TAKE_PROFIT_PCT`
+- `HARD_TAKE_PROFIT_PCT` (always exit when gain reaches this level; default `0.5` = +50%)
 - `REQUOTE_TICK_THRESHOLD`, `MIN_REQUOTE_MS`, `FORCE_REQUOTE_MS`
 - `BUY_WINDOW_SEC` (buy entries allowed only in this many seconds from market open)
 - `BUY_MIN_LAG_BPS` (minimum lag edge required to open buys)
@@ -62,6 +63,8 @@ npm run dev
 - `EXIT_USE_MARKET_ON_SIGNAL` (when exit triggers, use marketable sell/FAK for faster fills)
 - `EXIT_FAST_UNDERCUT_TICKS`, `EXIT_MIN_PROFIT_TICKS` (faster exits while still requiring a small profit)
 - `EXIT_CATCHUP_BUFFER_BPS` (extra tolerance for catch-up exit trigger against buy-time BTC target)
+- `EXIT_ALLOW_PROFIT_BEFORE_CATCHUP` (allow profitable exits even if catch-up confirmation lags)
+- `EXIT_FORCE_AFTER_HOLD_SEC` (force profitable exit after hold timeout)
 - `EXIT_FAILSAFE_AFTER_FAILS`, `EXIT_FAILSAFE_EXTRA_TICKS` (more aggressive exits after repeated failures)
 - `SESSION_MAX_CONSECUTIVE_LOSSES`, `SESSION_MAX_NET_LOSS_USDC` (session buy brakes)
 - `LOSS_COOLDOWN_MARKETS_AFTER_LOSS` (skip next N full markets after a losing market)

@@ -190,6 +190,7 @@ export class TradeEngine {
     private readonly maxInventoryNotionalUsdc = env.MAX_INVENTORY_NOTIONAL_USDC;
     private readonly takeProfitEnabled = env.TAKE_PROFIT_ENABLED;
     private readonly takeProfitPct = env.TAKE_PROFIT_PCT;
+    private readonly hardTakeProfitPct = Math.max(0, getEnvNumber("HARD_TAKE_PROFIT_PCT", 0.5));
     private readonly minOrderSize = Math.max(0, getEnvNumber("MIN_ORDER_SIZE", 5));
     private readonly minBuyNotionalUsdc = Math.max(0, getEnvNumber("MIN_BUY_NOTIONAL_USDC", 1));
     private readonly dustRecoveryEnabled = getEnvBool("DUST_RECOVERY_ENABLED", true);
@@ -217,6 +218,8 @@ export class TradeEngine {
     private readonly exitFastUndercutTicks = Math.max(0, getEnvInt("EXIT_FAST_UNDERCUT_TICKS", 1));
     private readonly exitMinProfitTicks = Math.max(0, getEnvInt("EXIT_MIN_PROFIT_TICKS", 1));
     private readonly exitCatchupBufferBps = Math.max(0, getEnvNumber("EXIT_CATCHUP_BUFFER_BPS", 0));
+    private readonly exitAllowProfitBeforeCatchup = getEnvBool("EXIT_ALLOW_PROFIT_BEFORE_CATCHUP", true);
+    private readonly exitForceAfterHoldSec = Math.max(0, getEnvInt("EXIT_FORCE_AFTER_HOLD_SEC", 20));
     private readonly exitFailsafeAfterFails = Math.max(1, getEnvInt("EXIT_FAILSAFE_AFTER_FAILS", 3));
     private readonly exitFailsafeExtraTicks = Math.max(0, getEnvInt("EXIT_FAILSAFE_EXTRA_TICKS", 1));
     private readonly exitUseMarketOnSignal = getEnvBool("EXIT_USE_MARKET_ON_SIGNAL", true);
@@ -704,7 +707,7 @@ export class TradeEngine {
         const lag = this.computeLagDecision(fairYes, secondsToEnd);
         this.lastLagBpsDecision = lag.lagBps;
         const next = this.quoteFromFair(fairYes, lag.lagSkew);
-        const immediateExit = this.priceRiseExitSignal().active || this.takeProfitSignal().active;
+        const immediateExit = this.hardTakeProfitSignal().active || this.priceRiseExitSignal().active || this.takeProfitSignal().active;
         if (!immediateExit && !this.shouldRequote(next.bid, next.ask)) return;
 
         this.inFlight = true;
@@ -718,10 +721,13 @@ export class TradeEngine {
             let buySize = Math.max(0, Math.min(this.orderSize * lag.buyMult * riskMode.sizeMult, remainingByPosition, remainingByNotional));
             let sellSize = 0;
 
+            const hardTakeProfitExit = this.hardTakeProfitSignal();
             const profitableExit = this.takeProfitSignal();
             const bullishTracker = lag.lagMode === "bullish_yes";
             const risingPriceExit = this.priceRiseExitSignal();
-            const exitSignal = risingPriceExit.active ? risingPriceExit : profitableExit;
+            const exitSignal = hardTakeProfitExit.active
+                ? hardTakeProfitExit
+                : (risingPriceExit.active ? risingPriceExit : profitableExit);
             const noChase = this.buyNoChaseSignal(fairYes);
             const requiredLagBps = this.buyMinLagBps + this.entryEstimatedRoundTripCostBps + this.entryExtraEdgeBufferBps;
             const lagStrongEnough = lag.lagBps !== null && lag.lagBps >= requiredLagBps;
@@ -852,6 +858,7 @@ export class TradeEngine {
                         tradingEnabled: this.runtimeTradingEnabled,
                         inventory: this.state.currentYesPosition,
                         takeProfitEnabled: this.takeProfitEnabled,
+                        hardTakeProfitPct: this.hardTakeProfitPct,
                         takeProfitActive: exitSignal.active,
                         takeProfitReason: exitSignal.reason,
                     },
@@ -907,18 +914,14 @@ export class TradeEngine {
 
                 if (sellSize > 0) {
                     const synced = await this.syncPositionFromDataApi(false);
+                    const openRows = await this.fetchOpenYesOrdersRows(true);
+                    const reservedShares = this.sumOpenSellReservedShares(openRows);
+                    const confirmedPos = Math.max(0, this.state.currentYesPosition - reservedShares);
                     if (!synced) {
-                        sellSkippedReason = "position_sync_failed";
-                        sellSize = 0;
-                        if (exitSignal.active && currentPos > 0) this.consecutiveExitFailures += 1;
-                    } else {
-                        const openRows = await this.fetchOpenYesOrdersRows(true);
-                        const reservedShares = this.sumOpenSellReservedShares(openRows);
-                        const freeShares = Math.max(0, this.state.currentYesPosition - reservedShares);
-                        const confirmedPos = Math.max(0, freeShares);
-                        sellSize = Math.min(sellSize, confirmedPos);
-                        sellSize = this.normalizeOrderSize(sellSize, effectiveAsk, false);
+                        sellSkippedReason = "position_sync_failed_using_cached_position";
                     }
+                    sellSize = Math.min(sellSize, confirmedPos);
+                    sellSize = this.normalizeOrderSize(sellSize, effectiveAsk, false);
 
                     if (sellSize > 0) {
                         try {
@@ -1021,8 +1024,10 @@ export class TradeEngine {
                                     // best effort
                                 }
                                 await this.syncPositionFromDataApi(false);
-                                const retryPos = Math.max(0, this.state.currentYesPosition);
-                                const retrySize = this.normalizeOrderSize(Math.min(sellSize, retryPos), effectiveAsk, false);
+                                const retryRows = await this.fetchOpenYesOrdersRows(true);
+                                const retryReservedShares = this.sumOpenSellReservedShares(retryRows);
+                                const retryFreePos = Math.max(0, this.state.currentYesPosition - retryReservedShares);
+                                const retrySize = this.normalizeOrderSize(Math.min(sellSize, retryFreePos), effectiveAsk, false);
                                 if (retrySize > 0) {
                                     if (exitSignal.active && this.exitUseMarketOnSignal) {
                                         await this.clobClient.createAndPostMarketOrder(
@@ -1406,23 +1411,52 @@ export class TradeEngine {
         return { active: true, exitPrice, reason: "triggered" };
     }
 
+    private hardTakeProfitSignal(): { active: boolean; exitPrice: number; reason: string } {
+        if (this.hardTakeProfitPct <= 0) return { active: false, exitPrice: 0, reason: "disabled" };
+        if (this.state.currentYesPosition <= 0) return { active: false, exitPrice: 0, reason: "no_inventory" };
+        const yes = this.books.get(this.yesTokenId);
+        const bestBid = yes?.bid ?? null;
+        if (bestBid === null || this.avgEntryPriceYes <= 0) return { active: false, exitPrice: 0, reason: "missing_bid_or_entry" };
+        const hardTarget = this.avgEntryPriceYes * (1 + this.hardTakeProfitPct);
+        if (bestBid < hardTarget) return { active: false, exitPrice: 0, reason: "hard_target_not_reached" };
+        const exitPrice = clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
+        return { active: true, exitPrice, reason: "hard_take_profit_triggered" };
+    }
+
     private priceRiseExitSignal(): { active: boolean; exitPrice: number; reason: string } {
         if (this.state.currentYesPosition <= 0) return { active: false, exitPrice: 0, reason: "no_inventory" };
         const yes = this.books.get(this.yesTokenId);
         const bestBid = yes?.bid ?? null;
         if (bestBid === null || this.avgEntryPriceYes <= 0) return { active: false, exitPrice: 0, reason: "missing_bid_or_entry" };
+        const minProfitTarget = clampToTickBounds(
+            roundUpToTick(this.avgEntryPriceYes + (this.exitMinProfitTicks * this.tickSize), this.tickSize),
+            this.tickSize,
+        );
         if (this.entrySpotMoveTargetBps !== null) {
             const fairYes = this.currentFairYes();
             const polyPriceForCatchup = fairYes ?? bestBid;
             const polyImpliedMoveBps = ((polyPriceForCatchup - 0.5) / this.signalK) * 10000;
             if ((polyImpliedMoveBps + this.exitCatchupBufferBps) < this.entrySpotMoveTargetBps) {
+                const holdSec = this.activePositionOpenedAt
+                    ? Math.max(0, Math.floor((Date.now() - this.activePositionOpenedAt) / 1000))
+                    : 0;
+                if (this.exitAllowProfitBeforeCatchup && bestBid >= minProfitTarget) {
+                    const exitPrice = clampToTickBounds(
+                        Math.max(
+                            minProfitTarget,
+                            roundDownToTick(bestBid - (this.exitFastUndercutTicks * this.tickSize), this.tickSize),
+                        ),
+                        this.tickSize,
+                    );
+                    return { active: true, exitPrice, reason: "profit_before_full_catchup" };
+                }
+                if (this.exitForceAfterHoldSec > 0 && holdSec >= this.exitForceAfterHoldSec && bestBid >= minProfitTarget) {
+                    const exitPrice = clampToTickBounds(roundDownToTick(bestBid, this.tickSize), this.tickSize);
+                    return { active: true, exitPrice, reason: "forced_exit_after_hold_timeout" };
+                }
                 return { active: false, exitPrice: 0, reason: "waiting_for_polymarket_catchup" };
             }
         }
-        const minProfitTarget = clampToTickBounds(
-            roundUpToTick(this.avgEntryPriceYes + (this.exitMinProfitTicks * this.tickSize), this.tickSize),
-            this.tickSize,
-        );
         if (bestBid < minProfitTarget) return { active: false, exitPrice: 0, reason: "price_not_risen" };
         const undercutCandidate = clampToTickBounds(
             roundDownToTick(bestBid - (this.exitFastUndercutTicks * this.tickSize), this.tickSize),
@@ -1503,9 +1537,8 @@ export class TradeEngine {
         if (!synced) {
             logger.warn(
                 { marketId: this.marketId, yesTokenId: this.yesTokenId },
-                "Force-flatten skipped: position sync failed",
+                "Force-flatten position sync failed; using cached position",
             );
-            return;
         }
         const openRows = await this.fetchOpenYesOrdersRows(true);
         const reservedShares = this.sumOpenSellReservedShares(openRows);
@@ -1592,7 +1625,10 @@ export class TradeEngine {
                 // best effort
             }
             await this.syncPositionFromDataApi(false);
-            const retrySize = this.normalizeOrderSize(Math.min(sellSize, Math.max(0, this.state.currentYesPosition)), candidateExit, false);
+            const retryRows = await this.fetchOpenYesOrdersRows(true);
+            const retryReservedShares = this.sumOpenSellReservedShares(retryRows);
+            const retryFreePos = Math.max(0, this.state.currentYesPosition - retryReservedShares);
+            const retrySize = this.normalizeOrderSize(Math.min(sellSize, retryFreePos), candidateExit, false);
             if (retrySize <= 0) {
                 logger.warn(
                     { marketId: this.marketId, yesTokenId: this.yesTokenId, position: this.state.currentYesPosition },
