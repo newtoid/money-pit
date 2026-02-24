@@ -906,76 +906,141 @@ export class TradeEngine {
                 }
 
                 if (sellSize > 0) {
-                    if (exitSignal.active && this.exitUseMarketOnSignal) {
-                        await this.clobClient.createAndPostMarketOrder(
-                            {
-                                tokenID: this.yesTokenId,
-                                side: Side.SELL,
-                                amount: sellSize,
-                            },
-                            { tickSize: String(this.tickSize) as any },
-                            OrderType.FAK as any,
-                        );
-                        sellPlaced = true;
-                        this.state.sellOrdersPlaced += 1;
-                    } else if (exitSignal.active && this.exitLayeredEnabled && sellSize >= (this.minOrderSize * 2)) {
-                        const aggressiveRawPrice = clampToTickBounds(
-                            effectiveAsk - (this.exitAggressiveTicks * this.tickSize),
-                            this.tickSize,
-                        );
-                        const aggressivePrice = clampToTickBounds(roundDownToTick(aggressiveRawPrice, this.tickSize), this.tickSize);
-                        let aggressiveSize = this.normalizeOrderSize(sellSize * this.exitAggressivePct, aggressivePrice, false);
-                        if (aggressiveSize > sellSize) aggressiveSize = sellSize;
-                        let passiveSize = this.normalizeOrderSize(sellSize - aggressiveSize, effectiveAsk, false);
-                        if (aggressiveSize <= 0 || passiveSize <= 0) {
-                            aggressiveSize = 0;
-                            passiveSize = sellSize;
-                        }
+                    await this.syncPositionFromDataApi(false);
+                    const confirmedPos = Math.max(0, this.state.currentYesPosition);
+                    sellSize = Math.min(sellSize, confirmedPos);
+                    sellSize = this.normalizeOrderSize(sellSize, effectiveAsk, false);
 
-                        if (aggressiveSize > 0) {
-                            await this.clobClient.createAndPostOrder(
-                                {
-                                    tokenID: this.yesTokenId,
-                                    side: Side.SELL,
-                                    size: aggressiveSize,
-                                    price: aggressivePrice,
-                                },
-                                { tickSize: String(this.tickSize) as any },
-                                OrderType.GTC,
-                            );
-                            sellPlaced = true;
-                            this.state.sellOrdersPlaced += 1;
-                        }
+                    if (sellSize > 0) {
+                        try {
+                            if (exitSignal.active && this.exitUseMarketOnSignal) {
+                                await this.clobClient.createAndPostMarketOrder(
+                                    {
+                                        tokenID: this.yesTokenId,
+                                        side: Side.SELL,
+                                        amount: sellSize,
+                                    },
+                                    { tickSize: String(this.tickSize) as any },
+                                    OrderType.FAK as any,
+                                );
+                                sellPlaced = true;
+                                this.state.sellOrdersPlaced += 1;
+                            } else if (exitSignal.active && this.exitLayeredEnabled && sellSize >= (this.minOrderSize * 2)) {
+                                const aggressiveRawPrice = clampToTickBounds(
+                                    effectiveAsk - (this.exitAggressiveTicks * this.tickSize),
+                                    this.tickSize,
+                                );
+                                const aggressivePrice = clampToTickBounds(roundDownToTick(aggressiveRawPrice, this.tickSize), this.tickSize);
+                                let aggressiveSize = this.normalizeOrderSize(sellSize * this.exitAggressivePct, aggressivePrice, false);
+                                if (aggressiveSize > sellSize) aggressiveSize = sellSize;
+                                let passiveSize = this.normalizeOrderSize(sellSize - aggressiveSize, effectiveAsk, false);
+                                if (aggressiveSize <= 0 || passiveSize <= 0) {
+                                    aggressiveSize = 0;
+                                    passiveSize = sellSize;
+                                }
 
-                        if (passiveSize > 0) {
-                            await this.clobClient.createAndPostOrder(
+                                if (aggressiveSize > 0) {
+                                    await this.clobClient.createAndPostOrder(
+                                        {
+                                            tokenID: this.yesTokenId,
+                                            side: Side.SELL,
+                                            size: aggressiveSize,
+                                            price: aggressivePrice,
+                                        },
+                                        { tickSize: String(this.tickSize) as any },
+                                        OrderType.GTC,
+                                    );
+                                    sellPlaced = true;
+                                    this.state.sellOrdersPlaced += 1;
+                                }
+
+                                if (passiveSize > 0) {
+                                    await this.clobClient.createAndPostOrder(
+                                        {
+                                            tokenID: this.yesTokenId,
+                                            side: Side.SELL,
+                                            size: passiveSize,
+                                            price: effectiveAsk,
+                                        },
+                                        { tickSize: String(this.tickSize) as any },
+                                        OrderType.GTC,
+                                    );
+                                    sellPlaced = true;
+                                    this.state.sellOrdersPlaced += 1;
+                                }
+                            } else {
+                                await this.clobClient.createAndPostOrder(
+                                    {
+                                        tokenID: this.yesTokenId,
+                                        side: Side.SELL,
+                                        size: sellSize,
+                                        price: effectiveAsk,
+                                    },
+                                    { tickSize: String(this.tickSize) as any },
+                                    OrderType.GTC,
+                                );
+                                sellPlaced = true;
+                                this.state.sellOrdersPlaced += 1;
+                            }
+                        } catch (err) {
+                            if (!this.isInsufficientBalanceOrAllowanceError(err)) throw err;
+                            logger.warn(
                                 {
-                                    tokenID: this.yesTokenId,
-                                    side: Side.SELL,
-                                    size: passiveSize,
-                                    price: effectiveAsk,
+                                    marketId: this.marketId,
+                                    yesTokenId: this.yesTokenId,
+                                    attemptedSellSize: sellSize,
+                                    inventoryBeforeRetry: this.state.currentYesPosition,
+                                    err: err instanceof Error ? err.message : String(err),
                                 },
-                                { tickSize: String(this.tickSize) as any },
-                                OrderType.GTC,
+                                "SELL rejected for balance/allowance; retrying after cancel+resync",
                             );
-                            sellPlaced = true;
-                            this.state.sellOrdersPlaced += 1;
+                            try {
+                                await this.cancelAllYesOrders();
+                            } catch {
+                                // best effort
+                            }
+                            await this.syncPositionFromDataApi(false);
+                            const retryPos = Math.max(0, this.state.currentYesPosition);
+                            const retrySize = this.normalizeOrderSize(Math.min(sellSize, retryPos), effectiveAsk, false);
+                            if (retrySize > 0) {
+                                if (exitSignal.active && this.exitUseMarketOnSignal) {
+                                    await this.clobClient.createAndPostMarketOrder(
+                                        {
+                                            tokenID: this.yesTokenId,
+                                            side: Side.SELL,
+                                            amount: retrySize,
+                                        },
+                                        { tickSize: String(this.tickSize) as any },
+                                        OrderType.FAK as any,
+                                    );
+                                } else {
+                                    await this.clobClient.createAndPostOrder(
+                                        {
+                                            tokenID: this.yesTokenId,
+                                            side: Side.SELL,
+                                            size: retrySize,
+                                            price: effectiveAsk,
+                                        },
+                                        { tickSize: String(this.tickSize) as any },
+                                        OrderType.GTC,
+                                    );
+                                }
+                                sellPlaced = true;
+                                this.state.sellOrdersPlaced += 1;
+                                sellSize = retrySize;
+                            } else {
+                                sellSkippedReason = "insufficient_yes_inventory_after_sync";
+                            }
                         }
                     } else {
-                        await this.clobClient.createAndPostOrder(
-                            {
-                                tokenID: this.yesTokenId,
-                                side: Side.SELL,
-                                size: sellSize,
-                                price: effectiveAsk,
-                            },
-                            { tickSize: String(this.tickSize) as any },
-                            OrderType.GTC,
-                        );
-                        sellPlaced = true;
-                        this.state.sellOrdersPlaced += 1;
+                        sellSkippedReason = "insufficient_yes_inventory_after_sync";
                     }
-                    if (exitSignal.active) this.consecutiveExitFailures = 0;
+
+                    if (sellPlaced && exitSignal.active) {
+                        this.consecutiveExitFailures = 0;
+                    } else if (exitSignal.active && currentPos > 0) {
+                        this.consecutiveExitFailures += 1;
+                    }
                 } else {
                     if (exitSignal.active && currentPos > 0 && currentPos < this.minOrderSize) {
                         sellSkippedReason = "tp_inventory_below_min_order_size";
@@ -1124,7 +1189,14 @@ export class TradeEngine {
         )?.trim() || null;
     }
 
-    private async refreshPositionFromDataApi() {
+    private isInsufficientBalanceOrAllowanceError(err: unknown): boolean {
+        const e: any = err as any;
+        const msg = String(e?.message ?? "").toLowerCase();
+        const dataMsg = String(e?.response?.data?.error ?? e?.response?.data ?? "").toLowerCase();
+        return msg.includes("not enough balance / allowance") || dataMsg.includes("not enough balance / allowance");
+    }
+
+    private async syncPositionFromDataApi(triggerRequote: boolean) {
         if (!this.makerAddress || !this.yesTokenId) return;
         try {
             const url = `https://data-api.polymarket.com/positions?user=${encodeURIComponent(this.makerAddress)}&sizeThreshold=0`;
@@ -1171,8 +1243,12 @@ export class TradeEngine {
                 this.lastPositionPollErrorAt = now;
             }
         } finally {
-            void this.maybeQuote();
+            if (triggerRequote) void this.maybeQuote();
         }
+    }
+
+    private async refreshPositionFromDataApi() {
+        await this.syncPositionFromDataApi(true);
     }
 
     private async refreshBooksFromRest() {
@@ -1398,11 +1474,13 @@ export class TradeEngine {
             return;
         }
 
-        let sellSize = currentPos;
+        await this.syncPositionFromDataApi(false);
+        const confirmedPos = Math.max(0, this.state.currentYesPosition);
+        let sellSize = Math.min(currentPos, confirmedPos);
         let dustRecoveryShortSell = false;
         if (
-            currentPos > 0
-            && currentPos < this.minOrderSize
+            sellSize > 0
+            && sellSize < this.minOrderSize
             && this.allowShortSell
             && this.dustRecoveryEnabled
         ) {
@@ -1439,27 +1517,78 @@ export class TradeEngine {
         } catch (err) {
             logger.warn({ err, marketId: this.marketId }, "Cancel-all before force-flatten SELL failed; continuing with SELL");
         }
-        if (hardDeadlineActive) {
-            await this.clobClient.createAndPostMarketOrder(
+        try {
+            if (hardDeadlineActive) {
+                await this.clobClient.createAndPostMarketOrder(
+                    {
+                        tokenID: this.yesTokenId,
+                        side: Side.SELL,
+                        amount: sellSize,
+                    },
+                    { tickSize: String(this.tickSize) as any },
+                    OrderType.FAK as any,
+                );
+            } else {
+                await this.clobClient.createAndPostOrder(
+                    {
+                        tokenID: this.yesTokenId,
+                        side: Side.SELL,
+                        size: sellSize,
+                        price: candidateExit,
+                    },
+                    { tickSize: String(this.tickSize) as any },
+                    OrderType.GTC,
+                );
+            }
+        } catch (err) {
+            if (!this.isInsufficientBalanceOrAllowanceError(err)) throw err;
+            logger.warn(
                 {
-                    tokenID: this.yesTokenId,
-                    side: Side.SELL,
-                    amount: sellSize,
+                    marketId: this.marketId,
+                    yesTokenId: this.yesTokenId,
+                    attemptedSellSize: sellSize,
+                    inventoryBeforeRetry: this.state.currentYesPosition,
+                    err: err instanceof Error ? err.message : String(err),
                 },
-                { tickSize: String(this.tickSize) as any },
-                OrderType.FAK as any,
+                "Force-flatten SELL rejected for balance/allowance; retrying after cancel+resync",
             );
-        } else {
-            await this.clobClient.createAndPostOrder(
-                {
-                    tokenID: this.yesTokenId,
-                    side: Side.SELL,
-                    size: sellSize,
-                    price: candidateExit,
-                },
-                { tickSize: String(this.tickSize) as any },
-                OrderType.GTC,
-            );
+            try {
+                await this.cancelAllYesOrders();
+            } catch {
+                // best effort
+            }
+            await this.syncPositionFromDataApi(false);
+            const retrySize = this.normalizeOrderSize(Math.min(sellSize, Math.max(0, this.state.currentYesPosition)), candidateExit, false);
+            if (retrySize <= 0) {
+                logger.warn(
+                    { marketId: this.marketId, yesTokenId: this.yesTokenId, position: this.state.currentYesPosition },
+                    "Force-flatten retry skipped: no inventory after resync",
+                );
+                return;
+            }
+            if (hardDeadlineActive) {
+                await this.clobClient.createAndPostMarketOrder(
+                    {
+                        tokenID: this.yesTokenId,
+                        side: Side.SELL,
+                        amount: retrySize,
+                    },
+                    { tickSize: String(this.tickSize) as any },
+                    OrderType.FAK as any,
+                );
+            } else {
+                await this.clobClient.createAndPostOrder(
+                    {
+                        tokenID: this.yesTokenId,
+                        side: Side.SELL,
+                        size: retrySize,
+                        price: candidateExit,
+                    },
+                    { tickSize: String(this.tickSize) as any },
+                    OrderType.GTC,
+                );
+            }
+            sellSize = retrySize;
         }
         this.state.sellOrdersPlaced += 1;
 

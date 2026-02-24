@@ -17,27 +17,14 @@ function htmlPage() {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Polymarket 5m Maker</title>
   <style>
-    :root{
-      --bg0:#050910;
-      --bg1:#081426;
-      --bg2:#0b1f38;
-      --card:#0c1727cc;
-      --line:#2f4f74;
-      --text:#d9f3ff;
-      --muted:#8eb2cb;
-      --neon:#3bf7c2;
-      --cyan:#5bc0ff;
-      --gold:#ffc857;
-      --violet:#b69cff;
-    }
     * { box-sizing:border-box; }
     body {
       margin:0;
       background:
         radial-gradient(1000px 520px at 8% -10%, #3bf7c222, transparent 60%),
         radial-gradient(900px 460px at 92% -6%, #5bc0ff20, transparent 56%),
-        linear-gradient(145deg, var(--bg0), var(--bg1) 45%, var(--bg2));
-      color:var(--text);
+        linear-gradient(145deg, #050910, #081426 45%, #0b1f38);
+      color:#d9f3ff;
       font:13px/1.35 "Space Grotesk", "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
       position:relative;
       overflow-x:hidden;
@@ -65,7 +52,7 @@ function htmlPage() {
     .mast {
       margin:0 0 12px;
       padding:10px 12px;
-      border:1px solid var(--line);
+      border:1px solid #2f4f74;
       border-radius:10px;
       background:linear-gradient(180deg, #13263e, #0b1628);
       box-shadow:0 6px 24px #00000070, inset 0 0 0 1px #3bf7c22e;
@@ -86,15 +73,15 @@ function htmlPage() {
       font-size:24px;
       letter-spacing:.02em;
       font-family: "Orbitron", "Eurostile", "Bank Gothic", "JetBrains Mono", monospace;
-      color:var(--neon);
+      color:#3bf7c2;
       text-transform:uppercase;
       text-shadow:0 0 14px #00d08466, 0 0 28px #42ffd03d;
     }
     .tag { margin-top:4px; color:#9ec7df; font-size:12px; }
     .grid { display:grid; grid-template-columns:repeat(12,1fr); gap:10px; }
     .card {
-      background:linear-gradient(180deg, #101f33e8, var(--card));
-      border:1px solid var(--line);
+      background:linear-gradient(180deg, #101f33e8, #0c1727cc);
+      border:1px solid #2f4f74;
       border-radius:12px;
       padding:10px;
       min-height:88px;
@@ -117,9 +104,9 @@ function htmlPage() {
     @media (max-width: 980px){
       .span-3,.span-4,.span-6,.span-12{grid-column:span 12;}
     }
-    .k { color:var(--cyan); font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
+    .k { color:#5bc0ff; font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
     .v { margin-top:6px; font-size:16px; word-break:break-word; }
-    .small { margin-top:4px; color:var(--muted); font-size:12px; }
+    .small { margin-top:4px; color:#8eb2cb; font-size:12px; }
     .ok { color:#34ffa8; } .bad { color:#ff7a96; } .warn { color:#ffd166; }
     .badge {
       display:inline-block;
@@ -439,6 +426,7 @@ function htmlPage() {
           continue;
         }
 
+        if (!entry) continue;
         const sellPrice = Number.isFinite(p.ask) ? p.ask : (Number.isFinite(p.fair) ? p.fair : null);
         const catchup = !Number.isFinite(entry.spotMoveBps) || (Number.isFinite(p.polyImpliedMoveBps) && p.polyImpliedMoveBps >= entry.spotMoveBps);
         const risen = Number.isFinite(sellPrice) && sellPrice > entry.price;
@@ -504,8 +492,8 @@ function htmlPage() {
       if (!grid) return;
       const raw = localStorage.getItem(LAYOUT_KEY);
       if (!raw) return;
-      let order = null;
-      try { order = JSON.parse(raw); } catch { order = null; }
+      let order = [];
+      try { order = JSON.parse(raw) || []; } catch { order = []; }
       if (!Array.isArray(order)) return;
       const byId = new Map(getCards().map(c => [c.dataset.cardId, c]));
       order.forEach((id) => {
@@ -566,7 +554,10 @@ function htmlPage() {
           body: JSON.stringify(patch),
         });
         const body = await res.json();
-        if (!res.ok) throw new Error(body && body.error ? body.error : 'control update failed');
+        if (!res.ok) {
+          m.textContent = 'control error: ' + (body && body.error ? body.error : 'control update failed');
+          return;
+        }
         m.textContent = 'updated';
       } catch (e) {
         m.textContent = 'control error: ' + String(e);
@@ -952,7 +943,7 @@ export function startDashboardServer(opts: DashboardServerOpts) {
             });
             req.on("error", (err) => {
                 res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
-                res.end(JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }));
+                res.end(JSON.stringify({ ok: false, error: err.message }));
             });
             return;
         }
