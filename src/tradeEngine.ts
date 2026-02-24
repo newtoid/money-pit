@@ -1722,6 +1722,11 @@ export class TradeEngine {
             return;
         }
 
+        let buyPlaced = false;
+        let sellPlaced = false;
+        let buySkippedReason: string | null = null;
+        let sellSkippedReason: string | null = null;
+
         if (buySize > 0) {
             await this.clobClient.createAndPostOrder(
                 {
@@ -1734,6 +1739,9 @@ export class TradeEngine {
                 OrderType.GTC,
             );
             this.state.buyOrdersPlaced += 1;
+            buyPlaced = true;
+        } else {
+            buySkippedReason = buyGateReason ?? "size_below_constraints_or_risk_cap";
         }
         if (sellSize > 0) {
             if (this.exitUseMarketOnSignal) {
@@ -1759,7 +1767,41 @@ export class TradeEngine {
                 );
             }
             this.state.sellOrdersPlaced += 1;
+            sellPlaced = true;
+        } else {
+            sellSkippedReason = exitSignal.active ? "no_no_inventory_to_exit" : "no_exit_signal";
         }
+
+        logger.info(
+            {
+                noTokenId: this.noTokenId,
+                fairNo: noFair,
+                lag: {
+                    mode: lag.lagMode,
+                    bps: lag.lagBps,
+                },
+                feeAdjustedEntry: {
+                    requiredLagBps,
+                    estRoundTripCostBps: this.entryEstimatedRoundTripCostBps,
+                    extraEdgeBufferBps: this.entryExtraEdgeBufferBps,
+                    noSpreadBps: spreadBps,
+                    noSpreadTicks: spreadTicks,
+                    maxNoSpreadBps: this.entryMaxYesSpreadBps,
+                    maxNoSpreadTicks: this.entryMaxYesSpreadTicks,
+                },
+                orderSize: this.orderSize,
+                buySize,
+                sellSize,
+                buyGateReason,
+                buyPlaced,
+                sellPlaced,
+                buySkippedReason,
+                sellSkippedReason,
+                inventoryNo: this.state.currentNoPosition,
+                exitReason: exitSignal.reason,
+            },
+            "Posted NO quote orders",
+        );
     }
 
     private pushFairSample(fairYes: number) {
