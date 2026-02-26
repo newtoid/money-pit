@@ -17,3 +17,4 @@
 
 - Export dashboard snapshots to JSON/CSV for post-trade analysis.
 - Add basic backtest harness for lag-arb parameter sweeps.
+- Evaluate Python rewrite for simplified "buy-at-price-sell-at-profit" logic (consider if current TS config suffices).
