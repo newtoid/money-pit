@@ -1,17 +1,17 @@
 # polymarket-5m-maker
 
-A TypeScript bot for Polymarket BTC/ETH Up/Down markets (auto-selected mode, or fixed `MARKET_SLUG`).
+A TypeScript bot for Polymarket BTC Up/Down markets (auto-selected mode, or fixed `MARKET_SLUG`).
 
 What it does:
 - Auto-resolves market by mode:
   - `AUTO_MARKET_MODE=5m` -> latest BTC 5m
-  - `AUTO_MARKET_MODE=hourly_updown` + `AUTO_MARKET_ASSET=btc|eth|sol|xrp` -> latest hourly Up/Down
+  - `AUTO_MARKET_MODE=hourly_updown` -> latest hourly BTC Up/Down
 - Or uses fixed `MARKET_SLUG` if provided
 - Maintains live market/user websocket connections
 - Quotes YES-side orders around a fair value with risk controls
 - Applies optional lag-arbitrage bias using spot BTC vs Polymarket implied move
 - In bullish lag mode, follows a buy-first-then-sell-on-rise flow
-- Supports multi-market monitoring and per-asset trading toggles from dashboard
+- Uses a BTC-only runtime and dashboard controls
 
 ## Quick Start
 
@@ -28,8 +28,7 @@ npm install
   - `POLYMARKET_CLOB_SECRET`
   - `POLYMARKET_CLOB_PASSPHRASE`
 - Optional:
-  - `AUTO_MARKET_MODE`, `AUTO_MARKET_ASSET` for automatic market selection
-  - `AUTO_MARKET_ASSETS` and `MULTI_MARKET_ENABLED=true` to trade multiple assets simultaneously
+  - `AUTO_MARKET_MODE` for automatic market selection (`5m` or `hourly_updown`)
   - `MARKET_SLUG` to lock bot to a specific market
 
 3. Run:
@@ -49,6 +48,8 @@ npm run dev
 ## Core Runtime Modes
 
 - `DRY_RUN=true`: decisions only, no orders posted
+- `SIMPLE_MODE=true` (default): simpler runtime profile (single market, lag-arb off, layered exits off, no rolling/session buy brakes)
+- `SIMPLE_MODE=false`: re-enable advanced behavior
 - `TRADING_ENABLED=false`: disables live trading paths
 - `TRADING_USE_SIGNER_AS_MAKER=true`: signer acts as maker
 - `TRADING_USE_SIGNER_AS_MAKER=false`: uses funder/maker mode (`TRADING_FUNDER_ADDRESS`)
@@ -186,17 +187,6 @@ Dashboard shows:
 Behavior note:
 - In `BULLISH YES`, strategy is buy-first then exit on Polystorm price rise.
 
-## Multi-Market Dashboard Controls
-
-- `MULTI_MARKET_ENABLED=true`:
-  - runs one runtime per asset in `AUTO_MARKET_ASSETS`
-  - dashboard shows all active markets in `Markets In Use`
-- Asset toggles (`BTC/ETH/SOL/XRP`) in Controls:
-  - `ON`: trading allowed for that asset (subject to other risk gates)
-  - `OFF`: keep monitoring, but block new orders for that asset
-- Market selector (`View`) in Market card:
-  - switches charts/cards to the selected asset runtime
-
 ## Common Issues
 
 - `insufficient collateral/allowance`:
@@ -258,8 +248,6 @@ Important tradeoff:
 - `leftoverMarkets`: number of markets that ended with leftover position.
 - `Controls` card:
   - `Trading Enabled`: live start/stop switch for order placement.
-  - `Multi-Market`: run one market per configured asset instead of a single market.
-  - `BTC/ETH/SOL/XRP`: per-asset trading switches.
   - `cooldown`: auto safety mode after a losing market; trading can show manual ON but effective OFF while cooldown is active.
 - `Opportunity Replay`:
   - Chart markers show possible past buy/sell sequences under current rules.

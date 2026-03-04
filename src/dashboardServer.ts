@@ -5,8 +5,6 @@ type DashboardServerOpts = {
     getState: () => unknown;
     onSetControls?: (controls: {
         tradingEnabled?: boolean;
-        multiMarketEnabled?: boolean;
-        assetsEnabled?: { btc?: boolean; eth?: boolean; sol?: boolean; xrp?: boolean };
     }) => Promise<unknown> | unknown;
     onError?: (err: unknown) => void;
     onListening?: (port: number) => void;
@@ -54,18 +52,11 @@ function htmlPage() {
     .wrap { max-width:1400px; margin:20px auto; padding:0 14px; }
     .layoutShell {
       display:grid;
-      grid-template-columns:minmax(760px,1fr) 360px;
+      grid-template-columns:minmax(760px,1fr);
       gap:12px;
       align-items:start;
     }
     .leftPane { min-width:0; }
-    .rightPane {
-      position:sticky;
-      top:12px;
-      max-height:calc(100vh - 24px);
-      overflow:auto;
-      min-width:0;
-    }
     .mast {
       margin:0 0 12px;
       padding:10px 12px;
@@ -120,7 +111,6 @@ function htmlPage() {
     .span-12{grid-column:span 12;}
     @media (max-width: 980px){
       .layoutShell { grid-template-columns:1fr; }
-      .rightPane { position:static; max-height:none; overflow:visible; }
       .span-3,.span-4,.span-6,.span-12{grid-column:span 12;}
     }
     .k { color:#5bc0ff; font-size:11px; text-transform:uppercase; letter-spacing:.08em; font-weight:700; }
@@ -159,38 +149,6 @@ function htmlPage() {
       box-shadow:inset 0 0 0 1px #50f5c222;
     }
     .btn:hover{ filter:brightness(1.08); }
-    .btn-mini {
-      margin-top:0;
-      margin-left:8px;
-      padding:2px 7px;
-      font-size:11px;
-    }
-    .mkt-item {
-      margin-top:8px;
-      border:1px solid #2f4f74;
-      border-radius:8px;
-      background:#0b1628;
-      padding:6px 8px;
-    }
-    .mkt-item > summary {
-      cursor:pointer;
-      list-style:none;
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:6px;
-      color:#c9ecff;
-      font-weight:600;
-    }
-    .mkt-item > summary::-webkit-details-marker { display:none; }
-    .mkt-meta {
-      margin-top:6px;
-      color:#8fb3c8;
-      font-size:12px;
-      line-height:1.35;
-      word-break:break-word;
-    }
-    .mini-chart { width:100%; height:190px; display:block; margin-top:6px; border-radius:8px; background:#060f1c; border:1px solid #2e4f6f; }
     </style>
 </head>
 <body>
@@ -203,7 +161,7 @@ function htmlPage() {
     <section class="leftPane">
     <div class="grid" id="layoutGrid">
       <div class="card span-3"><div class="k">Process</div><div id="process" class="v"></div><div id="uptime" class="small"></div></div>
-      <div class="card span-3"><div class="k">Market</div><div id="market" class="v"></div><div id="window" class="small"></div><div class="small">View: <select id="marketSelect" style="background:#0f2136;color:#d9f3ff;border:1px solid #35597c;border-radius:6px;padding:2px 6px;"></select></div></div>
+      <div class="card span-3"><div class="k">Market</div><div id="market" class="v"></div><div id="window" class="small"></div></div>
       <div class="card span-3"><div class="k">Connections</div><div id="conns" class="v"></div><div id="wsdetail" class="small"></div></div>
       <div class="card span-3"><div class="k">Signal</div><div id="signal" class="v"></div><div id="signal2" class="small"></div><div id="lagBadge" class="small"></div><div id="flattenBadge" class="small"></div></div>
       <div class="card span-4"><div class="k">What Is Happening</div><div id="story" class="v"></div><div id="story2" class="small"></div></div>
@@ -232,28 +190,11 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Execution</div><div id="exec" class="v"></div><div id="exec2" class="small"></div></div>
       <div class="card span-3"><div class="k">Force Flatten</div><div id="flatten" class="v"></div><div id="flatten2" class="small"></div></div>
       <div class="card span-3"><div class="k">Portfolio</div><div id="portfolio" class="v"></div><div id="portfolio2" class="small"></div><div id="portfolio3" class="small"></div></div>
-      <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><br/><label><input type="checkbox" id="multiToggle" /> Multi-Market</label><br/><label><input type="checkbox" id="assetBtc" /> BTC</label> <label><input type="checkbox" id="assetEth" /> ETH</label> <label><input type="checkbox" id="assetSol" /> SOL</label> <label><input type="checkbox" id="assetXrp" /> XRP</label><br/><button id="layoutEditBtn" class="btn">Edit Layout</button> <button id="layoutResetBtn" class="btn">Reset</button><div id="controlMsg" class="small"></div></div></div>
+      <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><div id="controlMode" class="small"></div><button id="layoutEditBtn" class="btn">Edit Layout</button> <button id="layoutResetBtn" class="btn">Reset</button><div id="controlMsg" class="small"></div></div></div>
 
       <div class="card span-12"><div class="k">Recent Events</div><pre id="events"></pre></div>
     </div>
     </section>
-    <aside class="rightPane">
-      <div class="card">
-        <div class="k">All Markets</div>
-        <div id="marketStack" class="small"></div>
-      </div>
-      <div class="card" style="margin-top:10px;">
-        <div class="k">Portfolio Holdings (All Markets)</div>
-        <canvas id="holdingsChart" class="mini-chart"></canvas>
-        <div class="legend">
-          <span><i class="dot" style="background:#f59e0b"></i>BTC</span>
-          <span><i class="dot" style="background:#38bdf8"></i>ETH</span>
-          <span><i class="dot" style="background:#22c55e"></i>SOL</span>
-          <span><i class="dot" style="background:#a78bfa"></i>XRP</span>
-        </div>
-        <div id="holdingsSummary" class="small"></div>
-      </div>
-    </aside>
     </div>
   </div>
   <script>
@@ -271,19 +212,9 @@ function htmlPage() {
     function gateTag(label, ok){
       return '<span class="badge ' + (ok ? 'ok' : 'bad') + '">' + label + ': ' + (ok ? 'OK' : 'BLOCKED') + '</span>';
     }
-    let selectedAsset = 'btc';
-    function getMarkets(s){
-      return Array.isArray(s && s.markets) ? s.markets : [];
-    }
-    function pickSelectedMarket(s){
-      const markets = getMarkets(s);
-      if (markets.length === 0) return null;
-      const byAsset = markets.find((m) => String(m.asset) === String(selectedAsset));
-      return byAsset || markets[0];
-    }
-    function marketSignal(s, selected){
+    function marketSignal(s){
       const sig = (s && s.signal) || {};
-      const q = selected && selected.engine ? (selected.engine.lastQuote || {}) : {};
+      const q = (s && s.engine && s.engine.lastQuote) ? s.engine.lastQuote : {};
       const fairYes = Number(q.fairYes);
       const spotMoveBps = Number(sig.spotMoveBps);
       const k = Number((s && s.config && s.config.signalK) ?? 60);
@@ -310,44 +241,6 @@ function htmlPage() {
         lagBps,
         spotConnected: !!sig.spotConnected,
       };
-    }
-    function renderMarketStack(s, markets, controls){
-      const root = document.getElementById('marketStack');
-      if (!root) return;
-      if (!markets.length) {
-        root.textContent = 'No active markets';
-        return;
-      }
-      root.innerHTML = markets.map((m) => {
-        const e = (m && m.engine) || {};
-        const q = e.lastQuote || {};
-        const pnl = e.pnl || {};
-        const ctr = e.counters || {};
-        const sig = marketSignal(s, m);
-        const ff = e.forceFlatten || {};
-        const asset = String(m.asset || '-');
-        const pos = Number(e.currentYesPosition ?? 0);
-        const fair = Number(q.fairYes ?? NaN);
-        const invEst = Number.isFinite(pos) && Number.isFinite(fair) ? (pos * fair) : null;
-        const assetOn = !!((controls.assetsEnabled || {})[asset]);
-        const active = assetOn && !!controls.tradingEnabled && !controls.cooldownActiveThisMarket;
-        const selected = asset === selectedAsset;
-        return '<details class="mkt-item" data-asset="' + asset + '" ' + (selected ? 'open' : '') + '>'
-          + '<summary>'
-          + '<span><span class="badge ' + (active ? 'ok' : 'bad') + '">' + asset.toUpperCase() + ' ' + (active ? 'ON' : 'OFF') + '</span> '
-          + (m.marketId || '-')
-          + '</span>'
-          + '<button class="btn btn-mini" data-focus-asset="' + asset + '">Focus</button>'
-          + '</summary>'
-          + '<div class="mkt-meta">'
-          + 'question: ' + (m.question || '-') + '<br/>'
-          + 'lag=' + num(sig.lagBps, 1) + 'bps · fair=' + num(q.fairYes, 4) + ' · bid/ask=' + num(q.bid, 4) + '/' + num(q.ask, 4) + '<br/>'
-          + 'position=' + num(pos, 2) + ' · inventory(est)=' + usd(invEst) + '<br/>'
-          + 'fills=' + (ctr.fills ?? 0) + ' · buys=' + (ctr.buyOrdersPlaced ?? 0) + ' · sells=' + (ctr.sellOrdersPlaced ?? 0) + '<br/>'
-          + 'sessionNet(afterFees)=' + dlt(pnl.netAfterFeesSessionUsdc) + ' · flatten=' + (ff.ready ? 'ready' : (ff.enabled ? 'armed' : 'off'))
-          + '</div>'
-          + '</details>';
-      }).join('');
     }
     function rollingDeltaSec(key, seconds){
       if (hist.length < 2) return null;
@@ -491,56 +384,6 @@ function htmlPage() {
 
     }
 
-    function drawHoldingsChart(markets){
-      const c = document.getElementById('holdingsChart');
-      if (!c) return;
-      const { ctx, w, h } = fit(c);
-      ctx.clearRect(0,0,w,h);
-      ctx.fillStyle = "#060d16";
-      ctx.fillRect(0,0,w,h);
-
-      const assets = ['btc', 'eth', 'sol', 'xrp'];
-      const colors = { btc: '#f59e0b', eth: '#38bdf8', sol: '#22c55e', xrp: '#a78bfa' };
-      const rows = assets.map((a) => {
-        const m = (markets || []).find((x) => String(x.asset) === a);
-        const e = (m && m.engine) || {};
-        const q = e.lastQuote || {};
-        const pos = Number(e.currentYesPosition ?? 0);
-        const fair = Number(q.fairYes ?? NaN);
-        const invUsdc = Number.isFinite(pos) && Number.isFinite(fair) ? (pos * fair) : 0;
-        return { asset: a, pos, invUsdc, color: colors[a] };
-      });
-      const maxAbs = Math.max(1, ...rows.map((r) => Math.abs(r.invUsdc)));
-      const left = 66;
-      const right = w - 12;
-      const top = 14;
-      const rowH = Math.max(26, Math.floor((h - top - 10) / rows.length));
-      const barMax = Math.max(20, right - left - 90);
-
-      for (let i = 0; i < rows.length; i++) {
-        const r = rows[i];
-        const y = top + (i * rowH);
-        const barW = Math.max(0, Math.round((Math.abs(r.invUsdc) / maxAbs) * barMax));
-
-        ctx.fillStyle = "#23405a";
-        ctx.fillRect(left, y + 7, barMax, 12);
-        ctx.fillStyle = r.color;
-        ctx.fillRect(left, y + 7, barW, 12);
-
-        ctx.fillStyle = "#9fd2ee";
-        ctx.font = "11px ui-monospace, SFMono-Regular, Menlo, monospace";
-        ctx.fillText(r.asset.toUpperCase(), 10, y + 17);
-        ctx.fillText("$" + Number(r.invUsdc).toFixed(2), left + barMax + 8, y + 17);
-      }
-
-      const totalInv = rows.reduce((acc, r) => acc + r.invUsdc, 0);
-      const totalPos = rows.reduce((acc, r) => acc + r.pos, 0);
-      const summary = document.getElementById('holdingsSummary');
-      if (summary) {
-        summary.textContent = 'total inventory(est): ' + usd(totalInv) + ' · total YES shares: ' + num(totalPos, 2);
-      }
-    }
-
     function renderCharts(){
       drawChart("lagChart", [
         { key: "spotMoveBps", color: "#60a5fa" },
@@ -602,18 +445,8 @@ function htmlPage() {
       if (controlBusy) return;
       controlBusy = true;
       const t = document.getElementById('tradingToggle');
-      const mkt = document.getElementById('multiToggle');
-      const ab = document.getElementById('assetBtc');
-      const ae = document.getElementById('assetEth');
-      const as = document.getElementById('assetSol');
-      const ax = document.getElementById('assetXrp');
       const m = document.getElementById('controlMsg');
       t.disabled = true;
-      if (mkt) mkt.disabled = true;
-      if (ab) ab.disabled = true;
-      if (ae) ae.disabled = true;
-      if (as) as.disabled = true;
-      if (ax) ax.disabled = true;
       try {
         const res = await fetch('/api/control', {
           method: 'POST',
@@ -631,11 +464,6 @@ function htmlPage() {
       } finally {
         controlBusy = false;
         t.disabled = false;
-        if (mkt) mkt.disabled = false;
-        if (ab) ab.disabled = false;
-        if (ae) ae.disabled = false;
-        if (as) as.disabled = false;
-        if (ax) ax.disabled = false;
       }
     }
 
@@ -644,23 +472,12 @@ function htmlPage() {
         const res = await fetch('/api/status', { cache: 'no-store' });
         const s = await res.json();
         const controls = s.controls || {};
-        const markets = getMarkets(s);
-        const marketSelect = document.getElementById('marketSelect');
-        if (marketSelect) {
-          const options = markets.map((m) => String(m.asset));
-          if (!options.includes(String(selectedAsset)) && options.length > 0) selectedAsset = options[0];
-          const curr = Array.from(marketSelect.options).map((o) => o.value);
-          if (curr.join(',') !== options.join(',')) {
-            marketSelect.innerHTML = options.map((a) => '<option value="' + a + '">' + a.toUpperCase() + '</option>').join('');
-          }
-          if (marketSelect.value !== selectedAsset) marketSelect.value = selectedAsset;
-        }
-        const selected = pickSelectedMarket(s);
-        const e = (selected && selected.engine) || {};
+        const market = s.market || {};
+        const e = s.engine || {};
         const q = e.lastQuote || null;
         const pnl = e.pnl || {};
         const ctr = e.counters || {};
-        const sig = marketSignal(s, selected);
+        const sig = marketSignal(s);
         const lagArb = e.lagArb || {};
         const ff = e.forceFlatten || {};
 
@@ -679,18 +496,14 @@ function htmlPage() {
           + ' · leftoverMarkets=' + (ml.leftoverAtHandoff ?? 0);
 
         document.getElementById('market').textContent =
-          selected ? ((selected.slug || '-') + ' | ' + (selected.marketId || '-')) : '-';
+          (market.slug || '-') + ' | ' + (market.marketId || '-');
         document.getElementById('window').textContent =
-          selected
-            ? ('asset=' + String(selected.asset || '-').toUpperCase() + ' · tokens=' + ((selected.tokenIds || []).length) + ' · question=' + (selected.question || '-'))
-            : 'No active markets';
-        const focusAsset = String(selected?.asset || selectedAsset || '-').toUpperCase();
+          ('asset=' + String(market.asset || 'btc').toUpperCase() + ' · tokens=' + ((market.tokenIds || []).length) + ' · question=' + (market.question || '-'));
+        const focusAsset = String(market.asset || 'btc').toUpperCase();
         const lagTitle = document.getElementById('lagChartTitle');
         const riskTitle = document.getElementById('riskChartTitle');
         if (lagTitle) lagTitle.textContent = focusAsset + ' Lag (Spot vs Polymarket, bps)';
         if (riskTitle) riskTitle.textContent = focusAsset + ' Inventory / PnL';
-        renderMarketStack(s, markets, controls);
-        drawHoldingsChart(markets);
 
         document.getElementById('conns').innerHTML =
           'user <span class="'+cls(s.ws.user.connected)+'">' + (s.ws.user.connected ? 'up' : 'down') + '</span>'
@@ -837,21 +650,21 @@ function htmlPage() {
           + ' · currentHold=' + num(pnl.currentHoldSec, 1) + 's'
           + ' · pos=' + num(e.currentYesPosition, 2)
           + ' @fair ' + num((Number.isFinite(fairYes) ? fairYes : null), 4);
-        document.getElementById('controls').textContent =
+        const simpleMode = !!(s.config && s.config.simpleMode);
+        const controlMode = document.getElementById('controlMode');
+        if (controlMode) controlMode.textContent = simpleMode
+          ? 'Simple mode: BTC-only runtime.'
+          : 'BTC-only runtime.';
+        let controlsText =
           'trading(effective)=' + ((controls.effectiveTradingEnabled ?? false) ? 'ON' : 'OFF')
-          + ' · manual=' + ((controls.tradingEnabled ?? false) ? 'ON' : 'OFF')
-          + ' · multi=' + ((controls.multiMarketEnabled ?? false) ? 'ON' : 'OFF')
-          + ' · assets=' + JSON.stringify(controls.assetsEnabled || {})
-          + ' · cooldown=' + ((controls.cooldownActiveThisMarket ?? false) ? 'ACTIVE' : 'off')
+          + ' · manual=' + ((controls.tradingEnabled ?? false) ? 'ON' : 'OFF');
+        controlsText +=
+          ' · cooldown=' + ((controls.cooldownActiveThisMarket ?? false) ? 'ACTIVE' : 'off')
           + ' · cooldownLeft=' + (controls.cooldownMarketsRemaining ?? 0);
+        document.getElementById('controls').textContent = controlsText;
         if (!controlBusy) {
-          document.getElementById('tradingToggle').checked = !!controls.tradingEnabled;
-          const assets = controls.assetsEnabled || {};
-          document.getElementById('multiToggle').checked = !!controls.multiMarketEnabled;
-          document.getElementById('assetBtc').checked = !!assets.btc;
-          document.getElementById('assetEth').checked = !!assets.eth;
-          document.getElementById('assetSol').checked = !!assets.sol;
-          document.getElementById('assetXrp').checked = !!assets.xrp;
+          const tradingToggle = document.getElementById('tradingToggle');
+          tradingToggle.checked = !!controls.tradingEnabled;
         }
 
         document.getElementById('events').textContent =
@@ -866,44 +679,10 @@ function htmlPage() {
     tick();
     setInterval(tick, 1000);
     window.addEventListener('resize', renderCharts);
-    document.getElementById('marketSelect').addEventListener('change', (ev) => {
-      selectedAsset = String(ev && ev.target ? ev.target.value : selectedAsset);
-      hist.length = 0;
-      void tick();
-    });
-    document.getElementById('marketStack').addEventListener('click', (ev) => {
-      const btn = ev && ev.target && ev.target.closest ? ev.target.closest('[data-focus-asset]') : null;
-      if (!btn) return;
-      ev.preventDefault();
-      const next = String(btn.getAttribute('data-focus-asset') || selectedAsset);
-      selectedAsset = next;
-      const sel = document.getElementById('marketSelect');
-      if (sel) sel.value = next;
-      hist.length = 0;
-      void tick();
-    });
     document.getElementById('tradingToggle').addEventListener('change', (ev) => {
       const checked = !!(ev && ev.target && ev.target.checked);
       void setControlPatch({ tradingEnabled: checked });
     });
-    document.getElementById('multiToggle').addEventListener('change', (ev) => {
-      const checked = !!(ev && ev.target && ev.target.checked);
-      void setControlPatch({ multiMarketEnabled: checked });
-    });
-    function onAssetsChanged(){
-      void setControlPatch({
-        assetsEnabled: {
-          btc: !!document.getElementById('assetBtc').checked,
-          eth: !!document.getElementById('assetEth').checked,
-          sol: !!document.getElementById('assetSol').checked,
-          xrp: !!document.getElementById('assetXrp').checked,
-        }
-      });
-    }
-    document.getElementById('assetBtc').addEventListener('change', onAssetsChanged);
-    document.getElementById('assetEth').addEventListener('change', onAssetsChanged);
-    document.getElementById('assetSol').addEventListener('change', onAssetsChanged);
-    document.getElementById('assetXrp').addEventListener('change', onAssetsChanged);
     document.getElementById('layoutEditBtn').addEventListener('click', () => {
       setLayoutEditMode(!layoutEdit);
     });
@@ -980,18 +759,8 @@ export function startDashboardServer(opts: DashboardServerOpts) {
                 }
                 const controls: {
                     tradingEnabled?: boolean;
-                    multiMarketEnabled?: boolean;
-                    assetsEnabled?: { btc?: boolean; eth?: boolean; sol?: boolean; xrp?: boolean };
                 } = {};
                 if (typeof parsed?.tradingEnabled === "boolean") controls.tradingEnabled = parsed.tradingEnabled;
-                if (typeof parsed?.multiMarketEnabled === "boolean") controls.multiMarketEnabled = parsed.multiMarketEnabled;
-                if (parsed?.assetsEnabled && typeof parsed.assetsEnabled === "object") {
-                    controls.assetsEnabled = {};
-                    if (typeof parsed.assetsEnabled.btc === "boolean") controls.assetsEnabled.btc = parsed.assetsEnabled.btc;
-                    if (typeof parsed.assetsEnabled.eth === "boolean") controls.assetsEnabled.eth = parsed.assetsEnabled.eth;
-                    if (typeof parsed.assetsEnabled.sol === "boolean") controls.assetsEnabled.sol = parsed.assetsEnabled.sol;
-                    if (typeof parsed.assetsEnabled.xrp === "boolean") controls.assetsEnabled.xrp = parsed.assetsEnabled.xrp;
-                }
                 void Promise.resolve(opts.onSetControls?.(controls))
                     .then((body) => {
                         res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });

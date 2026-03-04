@@ -39,6 +39,7 @@ const schema = z.object({
     MARKET_SLUG: z.string().optional(),
 
     DRY_RUN: z.preprocess((v) => parseEnvBool(v, false), z.boolean()),
+    SIMPLE_MODE: z.preprocess((v) => parseEnvBool(v, true), z.boolean()),
     TRADING_ENABLED: z.preprocess((v) => parseEnvBool(v, true), z.boolean()),
     TRADING_USE_SIGNER_AS_MAKER: z.preprocess((v) => parseEnvBool(v, false), z.boolean()),
     TRADING_FUNDER_ADDRESS: z.string().optional(),

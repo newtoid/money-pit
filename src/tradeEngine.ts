@@ -168,6 +168,8 @@ function getEnvBool(name: string, fallback: boolean): boolean {
     return fallback;
 }
 
+const SIMPLE_MODE = env.SIMPLE_MODE;
+
 export class TradeEngine {
     private readonly marketId: string;
     private readonly tokenIds: string[];
@@ -197,7 +199,7 @@ export class TradeEngine {
     private readonly dustRecoveryEnabled = getEnvBool("DUST_RECOVERY_ENABLED", true);
     private readonly noNewOrdersBeforeEndSec = Math.max(0, getEnvInt("NO_NEW_ORDERS_BEFORE_END", 30));
     private readonly cancelAllBeforeEndSec = Math.max(0, getEnvInt("CANCEL_ALL_BEFORE_END", 15));
-    private readonly lagArbEnabled = getEnvBool("LAG_ARB_ENABLED", true);
+    private readonly lagArbEnabled = SIMPLE_MODE ? false : getEnvBool("LAG_ARB_ENABLED", true);
     private readonly lagTradeMode: "bullish_only" | "bearish_only" | "both" = (() => {
         const raw = String(process.env.LAG_TRADE_MODE ?? "both").trim().toLowerCase();
         if (raw === "bullish_only" || raw === "bearish_only" || raw === "both") return raw;
@@ -210,7 +212,7 @@ export class TradeEngine {
     private readonly lagStaleMs = Math.max(500, getEnvInt("LAG_STALE_MS", 2500));
     private readonly lagDisableBeforeEndSec = Math.max(0, getEnvInt("LAG_DISABLE_BEFORE_END_SEC", 35));
     private readonly signalK = Math.max(1, getEnvNumber("SIGNAL_K", 60));
-    private readonly buyWindowSec = Math.max(0, getEnvInt("BUY_WINDOW_SEC", 180));
+    private readonly buyWindowSec = Math.max(0, getEnvInt("BUY_WINDOW_SEC", SIMPLE_MODE ? 300 : 180));
     private readonly buyMinLagBps = Math.max(0, getEnvNumber("BUY_MIN_LAG_BPS", 6));
     private readonly entryEstimatedRoundTripCostBps = Math.max(0, getEnvNumber("ENTRY_ESTIMATED_ROUNDTRIP_COST_BPS", 12));
     private readonly entryExtraEdgeBufferBps = Math.max(0, getEnvNumber("ENTRY_EXTRA_EDGE_BUFFER_BPS", 2));
@@ -219,7 +221,7 @@ export class TradeEngine {
     private readonly spreadTickEpsilon = 1e-9;
     private readonly buyNoChaseWindowMs = Math.max(0, getEnvInt("BUY_NO_CHASE_WINDOW_MS", 4000));
     private readonly buyNoChaseMaxUpBps = Math.max(0, getEnvNumber("BUY_NO_CHASE_MAX_UP_BPS", 8));
-    private readonly exitLayeredEnabled = getEnvBool("EXIT_LAYERED_ENABLED", true);
+    private readonly exitLayeredEnabled = SIMPLE_MODE ? false : getEnvBool("EXIT_LAYERED_ENABLED", true);
     private readonly exitAggressivePct = Math.max(0, Math.min(0.95, getEnvNumber("EXIT_AGGRESSIVE_PCT", 0.35)));
     private readonly exitAggressiveTicks = Math.max(0, getEnvInt("EXIT_AGGRESSIVE_TICKS", 1));
     private readonly exitFastUndercutTicks = Math.max(0, getEnvInt("EXIT_FAST_UNDERCUT_TICKS", 1));
@@ -229,7 +231,7 @@ export class TradeEngine {
     private readonly exitForceAfterHoldSec = Math.max(0, getEnvInt("EXIT_FORCE_AFTER_HOLD_SEC", 20));
     private readonly exitFailsafeAfterFails = Math.max(1, getEnvInt("EXIT_FAILSAFE_AFTER_FAILS", 3));
     private readonly exitFailsafeExtraTicks = Math.max(0, getEnvInt("EXIT_FAILSAFE_EXTRA_TICKS", 1));
-    private readonly exitUseMarketOnSignal = getEnvBool("EXIT_USE_MARKET_ON_SIGNAL", true);
+    private readonly exitUseMarketOnSignal = SIMPLE_MODE ? false : getEnvBool("EXIT_USE_MARKET_ON_SIGNAL", true);
     private readonly exitAllowLossOnlyLastSec = Math.max(0, getEnvInt("EXIT_ALLOW_LOSS_ONLY_LAST_SEC", 300));
     private readonly maxLossPerMarketUsdc = Math.max(0, getEnvNumber("MAX_LOSS_PER_MARKET_USDC", 0));
     private readonly clobLedgerMinIntervalMs = Math.max(0, getEnvInt("CLOB_LEDGER_MIN_INTERVAL_MS", 1000));
@@ -245,13 +247,19 @@ export class TradeEngine {
             ? "guarantee_flat"
             : "protect_price"
     );
-    private readonly sessionMaxConsecutiveLosses = Math.max(0, getEnvInt("SESSION_MAX_CONSECUTIVE_LOSSES", 3));
-    private readonly sessionMaxNetLossUsdc = Math.max(0, getEnvNumber("SESSION_MAX_NET_LOSS_USDC", 10));
+    private readonly sessionMaxConsecutiveLosses = SIMPLE_MODE ? 0 : Math.max(0, getEnvInt("SESSION_MAX_CONSECUTIVE_LOSSES", 3));
+    private readonly sessionMaxNetLossUsdc = SIMPLE_MODE ? 0 : Math.max(0, getEnvNumber("SESSION_MAX_NET_LOSS_USDC", 10));
     private readonly estimatedFeeBps = Math.max(0, getEnvNumber("ESTIMATED_FEE_BPS", 100));
-    private readonly rollingExpectancyWindow = Math.max(1, getEnvInt("ROLLING_EXPECTANCY_WINDOW", 20));
-    private readonly rollingExpectancyPauseBelowUsdc = getEnvNumber("ROLLING_EXPECTANCY_PAUSE_BELOW_USDC", -0.05);
-    private readonly rollingExpectancyReduceSizeBelowUsdc = getEnvNumber("ROLLING_EXPECTANCY_REDUCE_SIZE_BELOW_USDC", 0);
-    private readonly rollingExpectancyReduceSizeMult = Math.max(0.1, Math.min(1, getEnvNumber("ROLLING_EXPECTANCY_REDUCE_SIZE_MULT", 0.5)));
+    private readonly rollingExpectancyWindow = SIMPLE_MODE ? 1 : Math.max(1, getEnvInt("ROLLING_EXPECTANCY_WINDOW", 20));
+    private readonly rollingExpectancyPauseBelowUsdc = SIMPLE_MODE
+        ? Number.NEGATIVE_INFINITY
+        : getEnvNumber("ROLLING_EXPECTANCY_PAUSE_BELOW_USDC", -0.05);
+    private readonly rollingExpectancyReduceSizeBelowUsdc = SIMPLE_MODE
+        ? Number.NEGATIVE_INFINITY
+        : getEnvNumber("ROLLING_EXPECTANCY_REDUCE_SIZE_BELOW_USDC", 0);
+    private readonly rollingExpectancyReduceSizeMult = SIMPLE_MODE
+        ? 1
+        : Math.max(0.1, Math.min(1, getEnvNumber("ROLLING_EXPECTANCY_REDUCE_SIZE_MULT", 0.5)));
     private readonly venueMinOrderSize = Math.max(5, getEnvNumber("VENUE_MIN_ORDER_SIZE", 5));
 
     private readonly books = new Map<string, TopOfBook>();
@@ -803,7 +811,7 @@ export class TradeEngine {
                 : (risingPriceExit.active ? risingPriceExit : profitableExit);
             const noChase = this.buyNoChaseSignal(fairYes);
             const requiredLagBps = this.buyMinLagBps + this.entryEstimatedRoundTripCostBps + this.entryExtraEdgeBufferBps;
-            const lagStrongEnough = lag.lagBps !== null && lag.lagBps >= requiredLagBps;
+            const lagStrongEnough = !this.lagArbEnabled || (lag.lagBps !== null && lag.lagBps >= requiredLagBps);
             const maxLossBreached = this.maxLossPerMarketUsdc > 0
                 && (this.realizedPnlYes + this.unrealizedPnlYes()) <= -this.maxLossPerMarketUsdc;
             const yesSpreadBps = this.currentYesSpreadBps();
@@ -1662,7 +1670,7 @@ export class TradeEngine {
         const noAsk = clampToTickBounds(roundUpToTick(no.ask, this.tickSize), this.tickSize);
         const buyWindowActive = secondsSinceStart !== null && secondsSinceStart >= 0 && secondsSinceStart <= this.buyWindowSec;
         const requiredLagBps = this.buyMinLagBps + this.entryEstimatedRoundTripCostBps + this.entryExtraEdgeBufferBps;
-        const lagStrongEnough = lag.lagBps !== null && lag.lagBps <= -requiredLagBps;
+        const lagStrongEnough = !this.lagArbEnabled || (lag.lagBps !== null && lag.lagBps <= -requiredLagBps);
         const spreadBps = this.currentNoSpreadBps();
         const spreadTicks = this.currentNoSpreadTicks();
         const spreadTooWideBps = this.entryMaxYesSpreadBps > 0 && spreadBps !== null && spreadBps > this.entryMaxYesSpreadBps;
@@ -2284,6 +2292,7 @@ export class TradeEngine {
                 lastError: this.collateral.lastError,
             },
             dryRun: this.dryRun,
+            simpleMode: SIMPLE_MODE,
             tradingEnabled: this.runtimeTradingEnabled,
             configuredTradingEnabled: this.configuredTradingEnabled,
             lagArb: {

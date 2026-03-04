@@ -4,6 +4,7 @@ import { ReconnectingWs } from "./ReconnectingWs";
 
 type MarketSubscribeMsg = {
     type: "market";
+    asset_ids?: string[];
     assets_ids?: string[];
 };
 
@@ -23,12 +24,19 @@ export function createMarketWs(opts: CreateMarketWsOpts) {
         onOpen: () => {
             if (onReconnect) onReconnect();
             if (onOpen) onOpen();
+            if (assetIds.length === 0) {
+                logger.warn("Market WS subscribe skipped: no asset IDs");
+                return;
+            }
             const msg: MarketSubscribeMsg = {
                 type: "market",
+                // Some docs/SDK examples use `asset_ids`; others show `assets_ids`.
+                // Send both for compatibility across deployments.
+                asset_ids: assetIds,
                 assets_ids: assetIds,
             };
 
-            logger.info({ assets: assetIds.length }, "Market WS subscribe");
+            logger.info({ assets: assetIds.length, sample: assetIds.slice(0, 2) }, "Market WS subscribe");
             ws.sendJson(msg);
         },
         onMessage: (data) => {
