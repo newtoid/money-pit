@@ -8,7 +8,12 @@
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "auth:check": "tsx src/scripts/checkClobAuth.ts",
-    "backtest": "tsx src/scripts/backtestLagSignal.ts"
+    "backtest": "tsx src/scripts/backtestLagSignal.ts",
+    "arb:scan": "tsx src/scripts/runArbScanner.ts",
+    "arb:paper": "tsx src/scripts/runPaperArbTrader.ts",
+    "arb:replay": "tsx src/scripts/replayArbSession.ts",
+    "replay": "tsx scripts/replay.ts",
+    "doctor": "tsx scripts/doctor.ts"
   },
   "keywords": [],
   "author": "",

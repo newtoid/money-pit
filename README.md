@@ -45,6 +45,82 @@ npm run dev
 - `npm run start` - run once
 - `npm run auth:check` - verify CLOB auth configuration
 - `npm run backtest -- --input data/snapshots.jsonl` - replay lag-signal snapshots with conservative fills
+- `npm run arb:scan` - run the read-only binary arbitrage scanner
+- `npm run arb:paper` - run live paper trading on binary full-set arbitrage
+- `npm run arb:replay -- --input data/recordings/session.jsonl` - replay recorded arb sessions
+
+## Binary Arb Scanner
+
+The repo now includes a separate read-only scanner under `src/arbScanner/` for binary-market box arbitrage:
+
+- discover active binary markets from Gamma
+- extract YES / NO token IDs defensively
+- subscribe to live market data
+- track YES best ask and NO best ask
+- compute `edge = 1 - (yesAsk + noAsk + costBuffer)`
+- log only opportunities above `MIN_EDGE`
+
+Useful env vars:
+
+- `MAX_MARKETS=100`
+- `MIN_EDGE=0.01`
+- `COST_BUFFER=0.00`
+- `QUOTE_STALE_MS=5000`
+- `MARKET_SLUG_FILTER=btc`
+- `EVENT_SLUG_FILTER=...`
+- `TAG_FILTER=...`
+- `WATCHLIST_SLUGS=slug-a,slug-b`
+- `FEE_COST_OVERRIDE=0.00` if you want to inject a fixed extra fee cost per complete set
+- `ARB_RECORDER_ENABLED=true`
+- `ARB_RECORDER_DIR=data/recordings`
+- `TRADE_SIZE=5`
+- `SIM_SLIPPAGE_PER_LEG=0`
+- `SIM_PARTIAL_FILL_RATIO=1`
+- `SIM_REQUIRE_FULL_FILL=true`
+- `SIM_REQUIRE_KNOWN_SIZE=true`
+- `PAPER_MAX_TRADES_PER_MARKET=1`
+- `KILL_SWITCH_ENABLED=false`
+- `RISK_MAX_NOTIONAL_PER_TRADE=25`
+- `RISK_MAX_CONCURRENT_EXPOSURE=100`
+- `RISK_PER_MARKET_EXPOSURE_CAP=25`
+- `RISK_NO_TRADE_BEFORE_RESOLUTION_SEC=60`
+
+Important caveat:
+
+- Gamma metadata fields like `outcomes`, `clobTokenIds`, `fee`, and nested `events` / `tags` are parsed defensively because these payloads can drift.
+- The scanner currently treats `COST_BUFFER` as the conservative all-in adjustment. It does not yet convert Gamma `fee` fields into a trusted per-share cost, because the raw fee field semantics are not stable enough here to do that safely without a dedicated fee lookup implementation.
+
+Recorded arb sessions are JSONL and currently include:
+
+- `session_start`
+- `market_metadata`
+- `ws_market`
+- `book_top`
+- `opportunity`
+- `sim_fill`
+- `position_open`
+- `position_resolve`
+
+This is enough to rebuild top-of-book from raw websocket traffic or from normalized top-of-book snapshots, rerun the strategy, and simulate paper fills offline.
+
+Current hard risk guards for replay and paper trading:
+
+- kill switch
+- max notional per trade
+- max concurrent gross open notional
+- per-market gross open notional cap
+- stale quote guard
+- top-of-book ask-size guard on both legs
+- no-trade window before market resolution
+
+Current paper lifecycle assumptions:
+
+- a simulated full-set entry opens an explicit position
+- locked exposure is the entry all-in notional for that full set
+- settlement happens when `now >= market end time`
+- settlement payout currently assumes a complete binary YES+NO set pays `1.0 * size`
+- if end time is missing, the position remains open and unresolved
+- unrealized PnL is not currently marked to market; only realized PnL after settlement is tracked
 
 ## Backtesting
 
