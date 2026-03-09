@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
-    "auth:check": "tsx src/scripts/checkClobAuth.ts"
+    "auth:check": "tsx src/scripts/checkClobAuth.ts",
+    "backtest": "tsx src/scripts/backtestLagSignal.ts"
   },
   "keywords": [],
   "author": "",

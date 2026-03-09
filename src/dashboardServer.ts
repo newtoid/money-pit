@@ -187,7 +187,7 @@ function htmlPage() {
       </div>
 
       <div class="card span-3"><div class="k">Quote</div><div id="quote" class="v"></div><div id="quote2" class="small"></div></div>
-      <div class="card span-3"><div class="k">Execution</div><div id="exec" class="v"></div><div id="exec2" class="small"></div></div>
+      <div class="card span-3"><div class="k">Execution</div><div id="exec" class="v"></div><div id="exec2" class="small"></div><div id="exec3" class="small"></div></div>
       <div class="card span-3"><div class="k">Force Flatten</div><div id="flatten" class="v"></div><div id="flatten2" class="small"></div></div>
       <div class="card span-3"><div class="k">Portfolio</div><div id="portfolio" class="v"></div><div id="portfolio2" class="small"></div><div id="portfolio3" class="small"></div></div>
       <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><div id="controlMode" class="small"></div><button id="layoutEditBtn" class="btn">Edit Layout</button> <button id="layoutResetBtn" class="btn">Reset</button><div id="controlMsg" class="small"></div></div></div>
@@ -610,6 +610,13 @@ function htmlPage() {
           + ' · wins/losses=' + wins + '/' + losses
           + ' · winRate=' + num(winRate, 1) + '%'
           + ' · allowance=' + ((e.collateral && e.collateral.allowanceRaw) ? e.collateral.allowanceRaw : '-');
+        const recorder = s.recorder || {};
+        document.getElementById('exec3').textContent = recorder.enabled
+          ? ('recorder=ON'
+            + ' · lastWrite=' + fmtTs(recorder.lastWrittenAt)
+            + ' · throttle=' + (recorder.minIntervalMs ?? '-') + 'ms'
+            + ' · file=' + (recorder.currentPath || '-'))
+          : 'recorder=OFF';
 
         
         document.getElementById('flatten').innerHTML =

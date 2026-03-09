@@ -44,6 +44,68 @@ npm run dev
 - `npm run dev` - run with watch mode
 - `npm run start` - run once
 - `npm run auth:check` - verify CLOB auth configuration
+- `npm run backtest -- --input data/snapshots.jsonl` - replay lag-signal snapshots with conservative fills
+
+## Backtesting
+
+The repo now includes a minimal replay harness for the current lag signal. It does not simulate queue priority or live websocket timing; it answers a narrower question first:
+
+- if you buy on bullish lag setup
+- and exit using the current profit / catch-up / force-flatten logic
+- does the signal have positive expectancy after estimated fees?
+
+Input format is JSONL, one snapshot per line. Each line needs:
+
+```json
+{"ts":1710000000000,"spotPrice":62000,"yesBid":0.49,"yesAsk":0.50,"noBid":0.50,"noAsk":0.51}
+```
+
+Nested `yes` / `no` objects also work:
+
+```json
+{"ts":1710000000000,"spot":62000,"yes":{"bid":0.49,"ask":0.50},"no":{"bid":0.50,"ask":0.51}}
+```
+
+Run it with your current env tuning:
+
+```bash
+npm run backtest -- --input ./snapshots.jsonl
+```
+
+Optional:
+
+- `--market-duration-sec 300` to override the assumed market length
+- env vars like `SIGNAL_K`, `BUY_MIN_LAG_BPS`, `TAKE_PROFIT_PCT`, `ESTIMATED_FEE_BPS`, etc. are read by the harness so you can test the same knobs you use live
+
+Important limits:
+
+- entry fills are modeled conservatively at the YES ask
+- exits are modeled conservatively at the YES bid
+- there is no maker queue simulation, partial fill simulation, or REST/ws desync simulation
+- this is for signal validation, not full execution validation
+
+## Snapshot Recording
+
+You can now record live snapshots in the same JSONL shape the backtest script consumes.
+
+Set:
+
+- `SNAPSHOT_RECORDING_ENABLED=true`
+- `SNAPSHOT_RECORDING_DIR=data/snapshots` (optional)
+- `SNAPSHOT_RECORDING_MIN_INTERVAL_MS=250` (optional throttle)
+
+When enabled, the bot writes throttled snapshots per market slug into `data/snapshots/*.jsonl` using:
+
+- current spot price
+- YES best bid / ask
+- NO best bid / ask
+- timestamp, market id, and slug
+
+That gives you a direct loop:
+
+1. run the bot with recording enabled
+2. collect market sessions into JSONL
+3. replay them with `npm run backtest -- --input ...`
 
 ## Core Runtime Modes
 

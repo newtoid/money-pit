@@ -14,6 +14,7 @@ import { TradeEngine } from "./tradeEngine";
 import { startDashboardServer } from "./dashboardServer";
 import { runClobPreflight } from "./clobPreflight";
 import { SpotFeed } from "./spotFeed";
+import { SnapshotRecorder } from "./snapshotRecorder";
 
 const BTC_ASSET = "btc" as const;
 
@@ -88,6 +89,11 @@ async function main() {
     logEnvSummary();
     const startedAt = Date.now();
     const dashboardPort = Number(process.env.DASHBOARD_PORT ?? "8787");
+    const snapshotRecorder = new SnapshotRecorder({
+        enabled: String(process.env.SNAPSHOT_RECORDING_ENABLED ?? "false").trim().toLowerCase() === "true",
+        dir: process.env.SNAPSHOT_RECORDING_DIR ?? "data/snapshots",
+        minIntervalMs: Number(process.env.SNAPSHOT_RECORDING_MIN_INTERVAL_MS ?? "250"),
+    });
     const recentEvents: Array<{ at: number; type: string; msg?: string }> = [];
     const pushEvent = (type: string, msg?: string) => {
         recentEvents.unshift({ at: Date.now(), type, msg });
@@ -228,20 +234,34 @@ async function main() {
     if (clobClient && !env.DRY_RUN && env.TRADING_ENABLED) {
         await runClobPreflight(clobClient);
     }
-    const runtimes = new Map<typeof BTC_ASSET, ActiveRuntime>();
-    let primaryAsset: typeof BTC_ASSET = BTC_ASSET;
-
-    const getPrimaryRuntime = (): ActiveRuntime | null => {
-        if (runtimes.has(primaryAsset)) return runtimes.get(primaryAsset)!;
-        const first = runtimes.values().next();
-        return first.done ? null : first.value;
-    };
+    let activeRuntime: ActiveRuntime | null = null;
 
     const applyControlsToActive = () => {
-        for (const rt of runtimes.values()) {
-            const effectiveTradingEnabled = controls.tradingEnabled && !cooldownActiveThisMarket;
-            rt.engine.setTradingEnabled(effectiveTradingEnabled);
-        }
+        if (!activeRuntime) return;
+        const effectiveTradingEnabled = controls.tradingEnabled && !cooldownActiveThisMarket;
+        activeRuntime.engine.setTradingEnabled(effectiveTradingEnabled);
+    };
+
+    const maybeRecordSnapshot = () => {
+        if (!activeRuntime) return;
+        const spot = spotFeed.getSnapshot();
+        if (spot.price === null) return;
+        const engine = activeRuntime.engine.getSnapshot();
+        const yes = engine.yesTop;
+        const no = engine.noTop;
+        if (!yes || !no) return;
+        if (yes.bid === null || yes.ask === null || no.bid === null || no.ask === null) return;
+
+        snapshotRecorder.record({
+            ts: Date.now(),
+            marketId: activeRuntime.marketId,
+            slug: activeRuntime.slug,
+            spotPrice: spot.price,
+            yesBid: yes.bid,
+            yesAsk: yes.ask,
+            noBid: no.bid,
+            noAsk: no.ask,
+        });
     };
 
     const finalizeRuntime = (rt: ActiveRuntime) => {
@@ -263,25 +283,19 @@ async function main() {
         }
     };
 
-    const stopRuntime = (asset: typeof BTC_ASSET) => {
-        const rt = runtimes.get(asset);
+    const stopRuntime = () => {
+        const rt = activeRuntime;
         if (!rt) return;
         finalizeRuntime(rt);
         rt.userWs.stop();
         rt.marketWs.stop();
         rt.engine.stop();
-        runtimes.delete(asset);
-        wsState.user.connected = runtimes.size > 0;
-        wsState.market.connected = runtimes.size > 0;
-    };
-
-    const stopAllRuntimes = () => {
-        for (const asset of Array.from(runtimes.keys())) stopRuntime(asset);
+        activeRuntime = null;
         wsState.user.connected = false;
         wsState.market.connected = false;
     };
 
-    const startRuntime = (asset: typeof BTC_ASSET, target: {
+    const startRuntime = (target: {
         slug: string;
         marketId: string;
         question: string;
@@ -312,16 +326,16 @@ async function main() {
             onReconnect: () => {
                 wsState.user.reconnects += 1;
                 engine.onReconnect();
-                pushEvent(`user_ws_reconnect_${asset}`);
+                pushEvent("user_ws_reconnect_btc");
             },
             onOpen: () => {
                 wsState.user.connected = true;
-                pushEvent(`user_ws_open_${asset}`);
+                pushEvent("user_ws_open_btc");
             },
             onClose: (code, reason) => {
                 wsState.user.lastCloseCode = code;
                 wsState.user.lastCloseReason = reason;
-                pushEvent(`user_ws_close_${asset}`, `${code} ${reason}`);
+                pushEvent("user_ws_close_btc", `${code} ${reason}`);
             },
         });
         const marketWs = createMarketWs({
@@ -329,25 +343,26 @@ async function main() {
             onMessage: (msg) => {
                 wsState.market.messages += 1;
                 engine.onMarketMessage(msg);
+                maybeRecordSnapshot();
             },
             onReconnect: () => {
                 wsState.market.reconnects += 1;
                 engine.onReconnect();
-                pushEvent(`market_ws_reconnect_${asset}`);
+                pushEvent("market_ws_reconnect_btc");
             },
             onOpen: () => {
                 wsState.market.connected = true;
-                pushEvent(`market_ws_open_${asset}`);
+                pushEvent("market_ws_open_btc");
             },
             onClose: (code, reason) => {
                 wsState.market.lastCloseCode = code;
                 wsState.market.lastCloseReason = reason;
-                pushEvent(`market_ws_close_${asset}`, `${code} ${reason}`);
+                pushEvent("market_ws_close_btc", `${code} ${reason}`);
             },
         });
 
-        runtimes.set(asset, {
-            asset,
+        activeRuntime = {
+            asset: BTC_ASSET,
             slug: target.slug,
             marketId: target.marketId,
             question: target.question,
@@ -357,8 +372,7 @@ async function main() {
             engine,
             userWs,
             marketWs,
-        });
-        primaryAsset = asset;
+        };
         applyControlsToActive();
 
         userWs.start();
@@ -383,13 +397,12 @@ async function main() {
             const spotMove = (marketOpenSpot !== null && marketOpenSpot > 0)
                 ? ((price - marketOpenSpot) / marketOpenSpot)
                 : null;
-            for (const rt of runtimes.values()) {
-                rt.engine.updateSpotSignal({
-                    spotMoveBps: spotMove === null ? null : spotMove * 10000,
-                    updatedAt: Date.now(),
-                    connected: true,
-                });
-            }
+            activeRuntime?.engine.updateSpotSignal({
+                spotMoveBps: spotMove === null ? null : spotMove * 10000,
+                updatedAt: Date.now(),
+                connected: true,
+            });
+            maybeRecordSnapshot();
         },
     });
     const dashboardServer = startDashboardServer({
@@ -426,8 +439,7 @@ async function main() {
         },
         getState: () => ({
             ...(function () {
-                const primary = getPrimaryRuntime();
-                const engine = primary?.engine.getSnapshot() ?? null;
+                const engine = activeRuntime?.engine.getSnapshot() ?? null;
                 const spot = spotFeed.getSnapshot();
                 const fairYes = engine?.lastQuote?.fairYes ?? null;
                 const spotMove = (spot.price !== null && marketOpenSpot !== null && marketOpenSpot > 0)
@@ -449,14 +461,14 @@ async function main() {
                 const lagBps = (spotMove !== null && polymarketImpliedMove !== null)
                     ? (spotMove - polymarketImpliedMove) * 10000
                     : null;
-                const markets = Array.from(runtimes.values()).map((rt) => ({
-                    asset: rt.asset,
-                    slug: rt.slug,
-                    marketId: rt.marketId,
-                    question: rt.question,
-                    tokenIds: rt.tokenIds,
-                    engine: rt.engine.getSnapshot(),
-                }));
+                const markets = activeRuntime ? [{
+                    asset: activeRuntime.asset,
+                    slug: activeRuntime.slug,
+                    marketId: activeRuntime.marketId,
+                    question: activeRuntime.question,
+                    tokenIds: activeRuntime.tokenIds,
+                    engine: activeRuntime.engine.getSnapshot(),
+                }] : [];
                 return {
                     engine,
                     markets,
@@ -506,6 +518,7 @@ async function main() {
                 credsSource,
                 dashboardPort,
             },
+            recorder: snapshotRecorder.getStatus(),
             controls: {
                 ...controls,
                 effectiveTradingEnabled: controls.tradingEnabled && !cooldownActiveThisMarket,
@@ -516,12 +529,15 @@ async function main() {
             performance: {
                 lastMarketNetAfterFeesUsdc,
             },
-            market: (() => {
-                const p = getPrimaryRuntime();
-                return p
-                    ? { slug: p.slug, marketId: p.marketId, question: p.question, tokenIds: p.tokenIds, asset: p.asset }
-                    : { slug, marketId, question, tokenIds, asset: primaryAsset };
-            })(),
+            market: activeRuntime
+                ? {
+                    slug: activeRuntime.slug,
+                    marketId: activeRuntime.marketId,
+                    question: activeRuntime.question,
+                    tokenIds: activeRuntime.tokenIds,
+                    asset: activeRuntime.asset,
+                }
+                : { slug, marketId, question, tokenIds, asset: BTC_ASSET },
             ws: wsState,
             events: recentEvents,
         }),
@@ -529,13 +545,13 @@ async function main() {
 
     async function reconcileLatestRuntimes() {
         const latest = await resolveLatestAutoMarket();
-        const rt = runtimes.get(BTC_ASSET);
+        const rt = activeRuntime;
         if (rt && rt.marketId === latest.marketId) return;
         if (rt) {
             pushEvent("market_rollover", `${rt.marketId} -> ${latest.marketId}`);
-            stopRuntime(BTC_ASSET);
+            stopRuntime();
         }
-        if (!runtimes.size) {
+        if (!activeRuntime) {
             slug = latest.slug;
             marketId = latest.marketId;
             question = latest.question;
@@ -555,7 +571,7 @@ async function main() {
             latest.startUnixSec ?? deriveMarketStartUnixFromSlug(latest.slug),
             latest.endUnixSec ?? deriveMarketEndUnixFromSlug(latest.slug),
         );
-        startRuntime(BTC_ASSET, {
+        startRuntime({
             slug: latest.slug,
             marketId: latest.marketId,
             question: latest.question,
@@ -568,7 +584,7 @@ async function main() {
     if (useLatest) {
         await reconcileLatestRuntimes();
     } else {
-        startRuntime(BTC_ASSET, {
+        startRuntime({
             slug,
             marketId,
             question,
@@ -603,7 +619,8 @@ async function main() {
         if (rolloverTimer) clearInterval(rolloverTimer);
         rolloverTimer = null;
         spotFeed.stop();
-        stopAllRuntimes();
+        snapshotRecorder.stop();
+        stopRuntime();
         dashboardServer.close();
         process.exit(0);
     };
