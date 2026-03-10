@@ -128,6 +128,7 @@ export async function runRealDataReconciliationProbe(args: {
 
     const baseline = loadInternalBaseline({
         baselinePath: args.probeConfig.baselinePath,
+        runtimeCapturePath: args.probeConfig.runtimeCapturePath,
         orderBaselinePath: args.probeConfig.internalOrderSnapshotPath,
         accountBaselinePath: args.probeConfig.internalAccountSnapshotPath,
     });

@@ -5,6 +5,7 @@ import { ExternalReconciliationStore, runNoopReconciliation } from "./reconcilia
 import { ExternalBalanceReconciliationStore, runNoopBalanceReconciliation } from "./balanceReconciliation";
 import { normalizeExternalAccountSnapshotIngestion } from "./accountSnapshotIngestion";
 import { normalizeExternalSnapshotIngestion } from "./snapshotIngestion";
+import { captureRuntimeBaselineFromOrderLifecycle } from "./runtimeBaselineCapture";
 
 type StoredAttempt = {
     request: ExecutionRequest;
@@ -212,5 +213,18 @@ export class DryRunStubExecutionAdapter implements ExecutionAdapter {
             externalReconciliationSummary: this.reconciliation.getSummary(),
             externalBalanceReconciliationSummary: this.balanceReconciliation.getSummary(),
         };
+    }
+
+    captureInternalRuntimeBaseline(capturedAtMs = Date.now()) {
+        return captureRuntimeBaselineFromOrderLifecycle({
+            sourceLabel: "dry_run_stub_execution_adapter_runtime",
+            capturedAtMs,
+            orderLifecycleStore: this.orderLifecycle,
+            accountSnapshot: null,
+            rawSourceMetadata: {
+                adapterMode: this.mode,
+                trackedExecutionAttempts: this.orderLifecycle.getTrackedExecutionAttemptIds().length,
+            },
+        });
     }
 }

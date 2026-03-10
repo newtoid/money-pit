@@ -5,6 +5,7 @@ import { ExternalReconciliationStore, runNoopReconciliation } from "./reconcilia
 import { ExternalBalanceReconciliationStore, runNoopBalanceReconciliation } from "./balanceReconciliation";
 import { normalizeExternalAccountSnapshotIngestion } from "./accountSnapshotIngestion";
 import { normalizeExternalSnapshotIngestion } from "./snapshotIngestion";
+import { captureRuntimeBaselineFromOrderLifecycle } from "./runtimeBaselineCapture";
 
 export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
     readonly mode = "future_live_clob" as const;
@@ -172,5 +173,18 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
             externalReconciliationSummary: this.reconciliation.getSummary(),
             externalBalanceReconciliationSummary: this.balanceReconciliation.getSummary(),
         };
+    }
+
+    captureInternalRuntimeBaseline(capturedAtMs = Date.now()) {
+        return captureRuntimeBaselineFromOrderLifecycle({
+            sourceLabel: "future_live_clob_execution_adapter_runtime",
+            capturedAtMs,
+            orderLifecycleStore: this.orderLifecycle,
+            accountSnapshot: null,
+            rawSourceMetadata: {
+                adapterMode: this.mode,
+                trackedExecutionAttempts: this.orderLifecycle.getTrackedExecutionAttemptIds().length,
+            },
+        });
     }
 }

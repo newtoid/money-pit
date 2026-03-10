@@ -588,6 +588,28 @@ export type InternalBaselineCaptureResult = {
     accountOutputPath: string | null;
     exportedRecordCounts: Record<string, number>;
     missingSections: string[];
+    sectionSourceStatus: {
+        orders: "runtime_capture" | "combined_baseline" | "split_input" | "empty";
+        fills: "runtime_capture" | "combined_baseline" | "empty";
+        account: "runtime_capture" | "combined_baseline" | "split_input" | "empty";
+    };
+    sourceCounts: Record<string, number>;
+};
+
+export type InternalRuntimeBaselineCapture = {
+    provenance: "future_runtime_internal_baseline_capture";
+    sourceLabel: string;
+    capturedAtMs: number;
+    orders: InternalOrderBaselineSnapshot[];
+    fills: InternalFillBaselineSnapshot[];
+    account: InternalAccountBaselineSnapshot | null;
+    runtimeSourceStatus: {
+        orderLifecycleAvailable: boolean;
+        fillEventsAvailable: boolean;
+        internalAccountAvailable: boolean;
+    };
+    unavailableSources: string[];
+    rawSourceMetadata: Record<string, unknown> | null;
 };
 
 export type ExternalAssetBalanceSnapshot = {

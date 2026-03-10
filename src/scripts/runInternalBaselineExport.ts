@@ -9,6 +9,7 @@ function getArgValue(flag: string) {
 
 async function main() {
     const baselinePath = getArgValue("--baseline");
+    const runtimeCapturePath = getArgValue("--runtime-capture") ?? "data/baselines/runtime-baseline.capture.json";
     const orderInputPath = getArgValue("--order-input");
     const accountInputPath = getArgValue("--account-input");
     const outputPath = getArgValue("--output") ?? "data/baselines/internal-baseline.json";
@@ -18,20 +19,33 @@ async function main() {
 
     const loaded = loadInternalBaseline({
         baselinePath,
+        runtimeCapturePath,
         orderBaselinePath: orderInputPath,
         accountBaselinePath: accountInputPath,
     });
 
     const baseline = createInternalBaselineExport({
         sourceLabel,
-        provenance: loaded.orders.length === 0 && loaded.fills.length === 0 && (!loaded.account || loaded.account.assets.length === 0)
-            ? "empty_internal_baseline_export"
-            : "manual_internal_baseline_export",
+        provenance: (() => {
+            if (
+                loaded.sourceUsage.runtimeCaptureLoaded
+                && !baselinePath
+                && !orderInputPath
+                && !accountInputPath
+            ) {
+                return "future_runtime_internal_baseline_capture";
+            }
+            if (loaded.orders.length === 0 && loaded.fills.length === 0 && (!loaded.account || loaded.account.assets.length === 0)) {
+                return "empty_internal_baseline_export";
+            }
+            return "manual_internal_baseline_export";
+        })(),
         orders: loaded.orders,
         fills: loaded.fills,
         account: loaded.account,
         rawSourceMetadata: {
             baselineInputPath: baselinePath,
+            runtimeCapturePath,
             orderInputPath,
             accountInputPath,
         },
@@ -39,6 +53,7 @@ async function main() {
 
     const result = exportInternalBaseline({
         baseline,
+        loaded,
         outputPath,
         orderOutputPath,
         accountOutputPath,
@@ -51,6 +66,9 @@ async function main() {
         capturedAtMs: result.exportSnapshot.capturedAtMs,
         exportedRecordCounts: result.exportedRecordCounts,
         missingSections: result.missingSections,
+        sectionSourceStatus: result.sectionSourceStatus,
+        sourceCounts: result.sourceCounts,
+        runtimeCaptureUsed: loaded.sourceUsage.runtimeCaptureLoaded,
         outputPath: result.outputPath,
         orderOutputPath: result.orderOutputPath,
         accountOutputPath: result.accountOutputPath,

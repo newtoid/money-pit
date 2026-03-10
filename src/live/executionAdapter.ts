@@ -14,6 +14,7 @@ import {
     SnapshotIngestionResult,
     SimulatedOrderLifecycleUpdate,
     TimeoutResult,
+    InternalRuntimeBaselineCapture,
 } from "./types";
 
 export interface ExecutionAdapter {
@@ -38,4 +39,6 @@ export interface ExecutionAdapter {
     markExecutionTimedOut(executionAttemptId: string): TimeoutResult;
 
     reconcileExecutionState(): ReconciliationSnapshot;
+
+    captureInternalRuntimeBaseline(capturedAtMs?: number): InternalRuntimeBaselineCapture;
 }

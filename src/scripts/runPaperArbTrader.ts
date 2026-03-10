@@ -9,6 +9,7 @@ import { PaperTrader } from "../arbScanner/paperTrader";
 import { SettlementSource } from "../core/settlementSource";
 import { ResolutionPoller } from "../arbScanner/resolutionPoller";
 import { createExecutionAdapter } from "../live/createExecutionAdapter";
+import { mergeRuntimeBaselineCaptures, writeInternalRuntimeBaselineCapture } from "../live/internalBaseline";
 
 async function main() {
     const config = loadArbScannerConfig();
@@ -51,6 +52,8 @@ async function main() {
             executionMode: config.executionMode,
             liveExecutionEnabled: config.liveExecutionEnabled,
             executionKillSwitch: config.executionKillSwitch,
+            runtimeBaselineCaptureEnabled: config.runtimeBaselineCaptureEnabled,
+            runtimeBaselineCapturePath: config.runtimeBaselineCapturePath,
         },
         "Starting paper arbitrage trader",
     );
@@ -172,6 +175,27 @@ async function main() {
             },
             "Stopping paper arbitrage trader",
         );
+        if (config.runtimeBaselineCaptureEnabled) {
+            const runtimeCapture = mergeRuntimeBaselineCaptures({
+                adapterCapture: executionAdapter.captureInternalRuntimeBaseline(Date.now()),
+                paperTraderCapture: paperTrader.captureRuntimeBaseline(Date.now()),
+            });
+            const runtimeBaselineCapturePath = writeInternalRuntimeBaselineCapture({
+                capture: runtimeCapture,
+                outputPath: config.runtimeBaselineCapturePath,
+            });
+            logger.info(
+                {
+                    runtimeBaselineCapturePath,
+                    runtimeBaselineSourceStatus: runtimeCapture.runtimeSourceStatus,
+                    unavailableSources: runtimeCapture.unavailableSources,
+                    exportedOrders: runtimeCapture.orders.length,
+                    exportedFills: runtimeCapture.fills.length,
+                    exportedAccountAssets: runtimeCapture.account?.assets.length ?? 0,
+                },
+                "Wrote runtime baseline capture",
+            );
+        }
         liveTracker.stop();
         resolutionPoller.stop();
         recorder.stop();

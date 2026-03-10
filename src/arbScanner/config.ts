@@ -49,6 +49,8 @@ export type ArbScannerConfig = {
     executionMode: "dry_run_stub" | "replay_simulated" | "future_live_clob";
     liveExecutionEnabled: boolean;
     executionKillSwitch: boolean;
+    runtimeBaselineCaptureEnabled: boolean;
+    runtimeBaselineCapturePath: string;
 };
 
 function envNumber(name: string, fallback: number): number {
@@ -161,5 +163,7 @@ export function loadArbScannerConfig(): ArbScannerConfig {
         executionMode: envEnum("EXECUTION_MODE", "dry_run_stub", ["dry_run_stub", "replay_simulated", "future_live_clob"] as const),
         liveExecutionEnabled: envBool("LIVE_EXECUTION_ENABLED", false),
         executionKillSwitch: envBool("EXECUTION_KILL_SWITCH", true),
+        runtimeBaselineCaptureEnabled: envBool("RUNTIME_BASELINE_CAPTURE_ENABLED", true),
+        runtimeBaselineCapturePath: envString("RUNTIME_BASELINE_CAPTURE_PATH") ?? "data/baselines/runtime-baseline.capture.json",
     };
 }
