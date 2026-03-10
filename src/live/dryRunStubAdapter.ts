@@ -1,7 +1,8 @@
 import { ExecutionAdapter } from "./executionAdapter";
-import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ExternalSnapshotExecutionIngestion, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, SnapshotIngestionResult, TimeoutResult } from "./types";
+import { BalanceReconciliationInput, BalanceReconciliationResult, CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ExternalSnapshotExecutionIngestion, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, SnapshotIngestionResult, TimeoutResult } from "./types";
 import { OrderLifecycleStore } from "./orderLifecycle";
 import { ExternalReconciliationStore, runNoopReconciliation } from "./reconciliationModel";
+import { ExternalBalanceReconciliationStore, runNoopBalanceReconciliation } from "./balanceReconciliation";
 import { normalizeExternalSnapshotIngestion } from "./snapshotIngestion";
 
 type StoredAttempt = {
@@ -14,6 +15,7 @@ export class DryRunStubExecutionAdapter implements ExecutionAdapter {
     private readonly attempts = new Map<string, StoredAttempt>();
     private readonly orderLifecycle = new OrderLifecycleStore();
     private readonly reconciliation = new ExternalReconciliationStore();
+    private readonly balanceReconciliation = new ExternalBalanceReconciliationStore();
 
     constructor(
         private readonly opts: {
@@ -132,6 +134,13 @@ export class DryRunStubExecutionAdapter implements ExecutionAdapter {
         }));
     }
 
+    reconcileAccountBalances(input: BalanceReconciliationInput): BalanceReconciliationResult {
+        return this.balanceReconciliation.record(runNoopBalanceReconciliation({
+            adapterMode: this.mode,
+            input,
+        }));
+    }
+
     markExecutionTimedOut(executionAttemptId: string): TimeoutResult {
         const attempt = this.attempts.get(executionAttemptId);
         if (!attempt) {
@@ -175,6 +184,7 @@ export class DryRunStubExecutionAdapter implements ExecutionAdapter {
             trackedExecutionAttemptIds: this.orderLifecycle.getTrackedExecutionAttemptIds(),
             orderLifecycleSummary: this.orderLifecycle.getSummary(),
             externalReconciliationSummary: this.reconciliation.getSummary(),
+            externalBalanceReconciliationSummary: this.balanceReconciliation.getSummary(),
         };
     }
 }

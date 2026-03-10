@@ -1,7 +1,8 @@
 import { ExecutionAdapter } from "./executionAdapter";
-import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ExternalSnapshotExecutionIngestion, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, SnapshotIngestionResult, TimeoutResult } from "./types";
+import { BalanceReconciliationInput, BalanceReconciliationResult, CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ExternalSnapshotExecutionIngestion, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, SnapshotIngestionResult, TimeoutResult } from "./types";
 import { OrderLifecycleStore } from "./orderLifecycle";
 import { buildInternalReconciliationSnapshots, ExternalReconciliationStore, runExternalReconciliation } from "./reconciliationModel";
+import { ExternalBalanceReconciliationStore, runExternalBalanceReconciliation } from "./balanceReconciliation";
 import { normalizeExternalSnapshotIngestion } from "./snapshotIngestion";
 
 export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
@@ -9,6 +10,7 @@ export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
     private readonly submitResults = new Map<string, ExecutionSubmitResult>();
     private readonly orderLifecycle = new OrderLifecycleStore();
     private readonly reconciliation = new ExternalReconciliationStore();
+    private readonly balanceReconciliation = new ExternalBalanceReconciliationStore();
 
     constructor(
         private readonly opts: {
@@ -120,6 +122,13 @@ export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
         }));
     }
 
+    reconcileAccountBalances(input: BalanceReconciliationInput): BalanceReconciliationResult {
+        return this.balanceReconciliation.record(runExternalBalanceReconciliation({
+            adapterMode: this.mode,
+            input,
+        }));
+    }
+
     markExecutionTimedOut(executionAttemptId: string): TimeoutResult {
         if (!this.submitResults.has(executionAttemptId)) {
             return {
@@ -161,6 +170,7 @@ export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
             trackedExecutionAttemptIds: this.orderLifecycle.getTrackedExecutionAttemptIds(),
             orderLifecycleSummary: this.orderLifecycle.getSummary(),
             externalReconciliationSummary: this.reconciliation.getSummary(),
+            externalBalanceReconciliationSummary: this.balanceReconciliation.getSummary(),
         };
     }
 }

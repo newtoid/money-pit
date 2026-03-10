@@ -1,7 +1,8 @@
 import { ExecutionAdapter } from "./executionAdapter";
-import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ExternalSnapshotExecutionIngestion, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, SnapshotIngestionResult, TimeoutResult } from "./types";
+import { BalanceReconciliationInput, BalanceReconciliationResult, CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ExternalSnapshotExecutionIngestion, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, SnapshotIngestionResult, TimeoutResult } from "./types";
 import { OrderLifecycleStore } from "./orderLifecycle";
 import { ExternalReconciliationStore, runNoopReconciliation } from "./reconciliationModel";
+import { ExternalBalanceReconciliationStore, runNoopBalanceReconciliation } from "./balanceReconciliation";
 import { normalizeExternalSnapshotIngestion } from "./snapshotIngestion";
 
 export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
@@ -10,6 +11,7 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
     private readonly trackedExecutionAttemptIds: string[] = [];
     private readonly orderLifecycle = new OrderLifecycleStore();
     private readonly reconciliation = new ExternalReconciliationStore();
+    private readonly balanceReconciliation = new ExternalBalanceReconciliationStore();
 
     constructor(
         private readonly opts: {
@@ -108,6 +110,13 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
         }));
     }
 
+    reconcileAccountBalances(input: BalanceReconciliationInput): BalanceReconciliationResult {
+        return this.balanceReconciliation.record(runNoopBalanceReconciliation({
+            adapterMode: this.mode,
+            input,
+        }));
+    }
+
     markExecutionTimedOut(executionAttemptId: string): TimeoutResult {
         return {
             executionAttemptId,
@@ -135,6 +144,7 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
             trackedExecutionAttemptIds: [...this.trackedExecutionAttemptIds],
             orderLifecycleSummary: this.orderLifecycle.getSummary(),
             externalReconciliationSummary: this.reconciliation.getSummary(),
+            externalBalanceReconciliationSummary: this.balanceReconciliation.getSummary(),
         };
     }
 }

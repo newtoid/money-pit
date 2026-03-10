@@ -2,8 +2,10 @@ import { Opportunity } from "../../src/arbScanner/types";
 import { buildExecutionRequest } from "../../src/live/buildExecutionRequest";
 import { OrderLifecycleStore } from "../../src/live/orderLifecycle";
 import {
+    ExternalAccountSnapshot,
     ExternalExecutionSnapshot,
     ExternalFillSnapshot,
+    InternalAccountBalanceSnapshot,
     ExternalOrderSnapshot,
     InternalOrderReconciliationSnapshot,
 } from "../../src/live/types";
@@ -211,5 +213,73 @@ export function buildSyntheticSnapshot(args: {
         rawSourceMetadata: {
             fixtureLabel: args.sourceLabel,
         },
+    };
+}
+
+export function buildInternalAccountSnapshot(args?: {
+    accountId?: string;
+    sourceLabel?: string;
+    capturedAtMs?: number;
+    assets?: InternalAccountBalanceSnapshot["assets"];
+}): InternalAccountBalanceSnapshot {
+    return {
+        accountId: args?.accountId ?? "internal-account-1",
+        sourceLabel: args?.sourceLabel ?? "synthetic-internal-account",
+        capturedAtMs: args?.capturedAtMs ?? 1200,
+        assets: args?.assets ?? [
+            {
+                assetSymbol: "USDC",
+                availableBalance: 100,
+                reservedBalance: 10,
+                totalBalance: 110,
+                rawSourceMetadata: null,
+            },
+            {
+                assetSymbol: "YES_TOKEN",
+                availableBalance: 2,
+                reservedBalance: 0,
+                totalBalance: 2,
+                rawSourceMetadata: null,
+            },
+        ],
+        rawSourceMetadata: null,
+    };
+}
+
+export function buildExternalAccountSnapshot(args?: {
+    accountId?: string | null;
+    sourceLabel?: string;
+    capturedAtMs?: number;
+    maxSnapshotAgeMs?: number | null;
+    trustworthy?: boolean;
+    assets?: ExternalAccountSnapshot["assets"];
+    reservedBalances?: ExternalAccountSnapshot["reservedBalances"];
+    provenance?: ExternalAccountSnapshot["provenance"];
+}): ExternalAccountSnapshot {
+    return {
+        accountId: args?.accountId ?? "external-account-1",
+        provenance: args?.provenance ?? "synthetic_test_snapshot",
+        sourceLabel: args?.sourceLabel ?? "synthetic-external-account",
+        capturedAtMs: args?.capturedAtMs ?? 1200,
+        maxSnapshotAgeMs: args?.maxSnapshotAgeMs ?? 1000,
+        trustworthy: args?.trustworthy ?? true,
+        assets: args?.assets ?? [
+            {
+                assetSymbol: "USDC",
+                availableBalance: 100,
+                reservedBalance: 10,
+                totalBalance: 110,
+                rawSourceMetadata: null,
+            },
+            {
+                assetSymbol: "YES_TOKEN",
+                availableBalance: 2,
+                reservedBalance: 0,
+                totalBalance: 2,
+                rawSourceMetadata: null,
+            },
+        ],
+        reservedBalances: args?.reservedBalances ?? [],
+        rawSourceMetadata: null,
     };
 }

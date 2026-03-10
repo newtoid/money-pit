@@ -15,6 +15,7 @@ export * from "./live/executionAdapter";
 export * from "./live/buildExecutionRequest";
 export * from "./live/createExecutionAdapter";
 export * from "./live/orderLifecycle";
+export * from "./live/balanceReconciliation";
 export * from "./live/reconciliationAccounting";
 export * from "./live/reconciliationModel";
 export * from "./live/reconciliationMatching";

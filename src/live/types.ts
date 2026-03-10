@@ -526,4 +526,128 @@ export type ReconciliationSnapshot = {
     trackedExecutionAttemptIds: string[];
     orderLifecycleSummary: OrderLifecycleSummary;
     externalReconciliationSummary: ExternalReconciliationSummary;
+    externalBalanceReconciliationSummary: ExternalBalanceReconciliationSummary;
+};
+
+export type InternalAssetBalanceSnapshot = {
+    assetSymbol: string;
+    availableBalance: number | null;
+    reservedBalance: number | null;
+    totalBalance: number | null;
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type InternalAccountBalanceSnapshot = {
+    accountId: string;
+    sourceLabel: string;
+    capturedAtMs: number;
+    assets: InternalAssetBalanceSnapshot[];
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type ExternalAssetBalanceSnapshot = {
+    assetSymbol: string;
+    availableBalance: number | null;
+    reservedBalance: number | null;
+    totalBalance: number | null;
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type ExternalReservedBalanceSnapshot = {
+    assetSymbol: string;
+    reservationType: string;
+    amount: number | null;
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type ExternalAccountSnapshot = {
+    accountId: string | null;
+    provenance: ExternalSnapshotProvenance;
+    sourceLabel: string;
+    capturedAtMs: number;
+    maxSnapshotAgeMs: number | null;
+    trustworthy: boolean;
+    assets: ExternalAssetBalanceSnapshot[];
+    reservedBalances: ExternalReservedBalanceSnapshot[];
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type BalanceReconciliationInput = {
+    capturedAtMs: number;
+    comparisonMode: "noop_stub" | "synthetic_external_account_snapshot_compare";
+    internalAccount: InternalAccountBalanceSnapshot;
+    externalAccount: ExternalAccountSnapshot;
+};
+
+export type BalanceReconciliationIssueType =
+    | "external_internal_available_balance_mismatch"
+    | "external_internal_reserved_balance_mismatch"
+    | "external_internal_total_balance_mismatch"
+    | "missing_external_asset_balance"
+    | "unexpected_external_asset_balance"
+    | "stale_external_account_snapshot"
+    | "insufficient_balance_comparison_coverage";
+
+export type BalanceReconciliationIssue = {
+    issueType: BalanceReconciliationIssueType;
+    accountId: string | null;
+    assetSymbol: string | null;
+    message: string;
+    details: Record<string, number | string | boolean | null>;
+};
+
+export type BalanceComparisonField =
+    | "available_balance"
+    | "reserved_balance"
+    | "total_balance";
+
+export type BalanceReconciliationComparison = {
+    accountId: string | null;
+    assetSymbol: string;
+    matched: boolean;
+    issueTypes: BalanceReconciliationIssueType[];
+    skippedFields: BalanceComparisonField[];
+    details: Record<string, number | string | boolean | null>;
+};
+
+export type BalanceReconciliationResult = {
+    adapterMode: ExecutionMode;
+    comparisonMode: BalanceReconciliationInput["comparisonMode"];
+    capturedAtMs: number;
+    snapshotProvenance: ExternalSnapshotProvenance;
+    snapshotSourceLabel: string;
+    snapshotTrustworthy: boolean;
+    issueCountsByType: Record<string, number>;
+    comparisonCoverageCounts: Record<string, number>;
+    skippedComparisonFields: Record<string, number>;
+    matchedAssetCount: number;
+    mismatchedAssetCount: number;
+    missingExternalAssetCount: number;
+    unexpectedExternalAssetCount: number;
+    staleSnapshotWarningCount: number;
+    insufficientCoverageCount: number;
+    comparedAssetCount: number;
+    skippedAssetCount: number;
+    comparisons: BalanceReconciliationComparison[];
+    issues: BalanceReconciliationIssue[];
+};
+
+export type ExternalBalanceReconciliationSummary = {
+    reconciliationRuns: number;
+    issueCountsByType: Record<string, number>;
+    comparisonCoverageCounts: Record<string, number>;
+    skippedComparisonFields: Record<string, number>;
+    matchedAssetCount: number;
+    mismatchedAssetCount: number;
+    missingExternalAssetCount: number;
+    unexpectedExternalAssetCount: number;
+    staleSnapshotWarningCount: number;
+    insufficientCoverageCount: number;
+    comparedAssetCount: number;
+    skippedAssetCount: number;
+    lastComparisonMode: BalanceReconciliationInput["comparisonMode"] | null;
+    lastSnapshotSourceLabel: string | null;
+    trustworthySnapshotCount: number;
+    untrustworthySnapshotCount: number;
+    snapshotsByProvenance: Record<string, number>;
 };

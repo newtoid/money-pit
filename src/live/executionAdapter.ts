@@ -1,5 +1,7 @@
 import {
     CancelResult,
+    BalanceReconciliationInput,
+    BalanceReconciliationResult,
     ExecutionRequest,
     ExecutionStatusResult,
     ExecutionSubmitResult,
@@ -26,6 +28,8 @@ export interface ExecutionAdapter {
     ingestExternalSnapshot(input: ExternalSnapshotExecutionIngestion): SnapshotIngestionResult;
 
     reconcileWithExternalState(input: ReconciliationInput): ReconciliationResult;
+
+    reconcileAccountBalances(input: BalanceReconciliationInput): BalanceReconciliationResult;
 
     markExecutionTimedOut(executionAttemptId: string): TimeoutResult;
 
