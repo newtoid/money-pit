@@ -1,4 +1,5 @@
 export type ExecutionMode = "dry_run_stub" | "replay_simulated" | "future_live_clob";
+export type LiveSubmissionMode = "disabled" | "future_live_clob_guarded";
 
 export type ExecutionRequestSource = "paper" | "replay";
 
@@ -167,6 +168,87 @@ export type ExecutionSubmitResult = {
         | "rejected_live_mode_not_implemented";
     message: string;
     orderStatuses: OrderStatusSnapshot[];
+    liveSubmissionResult?: LiveOrderSubmissionResult | null;
+};
+
+export type LiveSubmissionGuardReason =
+    | "live_execution_disabled"
+    | "execution_kill_switch_enabled"
+    | "live_submission_mode_not_selected"
+    | "market_not_allowlisted"
+    | "asset_not_allowlisted"
+    | "order_size_above_cap"
+    | "max_order_size_cap_missing"
+    | "environment_confirmation_missing"
+    | "live_submission_not_implemented_in_phase";
+
+export type LiveOrderSubmissionRequest = {
+    executionAttemptId: string;
+    correlationId: string;
+    marketId: string;
+    slug: string;
+    legId: string;
+    tokenId: string;
+    binarySide: "yes" | "no";
+    side: ExecutionSide;
+    limitPrice: number;
+    size: number;
+    timeInForce: TimeInForce;
+    createdAtMs: number;
+    source: ExecutionRequestSource;
+};
+
+export type LiveSubmissionGuardResult = {
+    allow: boolean;
+    reasonCodes: LiveSubmissionGuardReason[];
+    details: {
+        liveExecutionEnabled: boolean;
+        executionKillSwitch: boolean;
+        liveSubmissionMode: LiveSubmissionMode;
+        maxOrderSize: number;
+        requiredEnvironmentConfirmation: string | null;
+        providedEnvironmentConfirmation: string | null;
+        allowlistedMarkets: string[];
+        allowlistedAssets: string[];
+        attemptedMarketId: string;
+        attemptedAssetId: string;
+        attemptedSize: number;
+    };
+};
+
+export type LiveOrderAckSnapshot = {
+    executionAttemptId: string;
+    legId: string;
+    tokenId: string;
+    status: "guard_denied" | "not_submitted";
+    reasonCode: LiveSubmissionGuardReason;
+    message: string;
+    createdAtMs: number;
+};
+
+export type LiveOrderSubmissionResult = {
+    executionAttemptId: string;
+    submissionMode: LiveSubmissionMode;
+    accepted: boolean;
+    submissionStatus: "denied_by_guard" | "denied_not_implemented";
+    guard: LiveSubmissionGuardResult;
+    deniedAcks: LiveOrderAckSnapshot[];
+    message: string;
+};
+
+export type LiveSubmissionSummary = {
+    attemptsConstructed: number;
+    deniedSubmissionCount: number;
+    guardFailureCounts: Record<string, number>;
+    configuredSafetyPosture: {
+        liveExecutionEnabled: boolean;
+        executionKillSwitch: boolean;
+        liveSubmissionMode: LiveSubmissionMode;
+        maxOrderSize: number;
+        allowlistedMarkets: string[];
+        allowlistedAssets: string[];
+        requiredEnvironmentConfirmationConfigured: boolean;
+    };
 };
 
 export type ExecutionStatusResult = {
@@ -534,6 +616,7 @@ export type ReconciliationSnapshot = {
     orderLifecycleSummary: OrderLifecycleSummary;
     externalReconciliationSummary: ExternalReconciliationSummary;
     externalBalanceReconciliationSummary: ExternalBalanceReconciliationSummary;
+    liveSubmissionSummary: LiveSubmissionSummary | null;
 };
 
 export type InternalAssetBalanceSnapshot = {

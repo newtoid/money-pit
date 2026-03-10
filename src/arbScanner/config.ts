@@ -49,6 +49,12 @@ export type ArbScannerConfig = {
     executionMode: "dry_run_stub" | "replay_simulated" | "future_live_clob";
     liveExecutionEnabled: boolean;
     executionKillSwitch: boolean;
+    liveSubmissionMode: "disabled" | "future_live_clob_guarded";
+    liveSubmissionAllowlistedMarkets: string[];
+    liveSubmissionAllowlistedAssets: string[];
+    liveSubmissionMaxOrderSize: number;
+    liveSubmissionRequiredConfirmation: string | null;
+    liveSubmissionConfirmation: string | null;
     runtimeBaselineCaptureEnabled: boolean;
     runtimeBaselineCapturePath: string;
 };
@@ -163,6 +169,12 @@ export function loadArbScannerConfig(): ArbScannerConfig {
         executionMode: envEnum("EXECUTION_MODE", "dry_run_stub", ["dry_run_stub", "replay_simulated", "future_live_clob"] as const),
         liveExecutionEnabled: envBool("LIVE_EXECUTION_ENABLED", false),
         executionKillSwitch: envBool("EXECUTION_KILL_SWITCH", true),
+        liveSubmissionMode: envEnum("LIVE_SUBMISSION_MODE", "disabled", ["disabled", "future_live_clob_guarded"] as const),
+        liveSubmissionAllowlistedMarkets: envString("LIVE_SUBMISSION_ALLOWLIST_MARKETS")?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
+        liveSubmissionAllowlistedAssets: envString("LIVE_SUBMISSION_ALLOWLIST_ASSETS")?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
+        liveSubmissionMaxOrderSize: Math.max(0, envNumber("LIVE_SUBMISSION_MAX_ORDER_SIZE", 0)),
+        liveSubmissionRequiredConfirmation: envString("LIVE_SUBMISSION_REQUIRED_CONFIRMATION"),
+        liveSubmissionConfirmation: envString("LIVE_SUBMISSION_CONFIRMATION"),
         runtimeBaselineCaptureEnabled: envBool("RUNTIME_BASELINE_CAPTURE_ENABLED", true),
         runtimeBaselineCapturePath: envString("RUNTIME_BASELINE_CAPTURE_PATH") ?? "data/baselines/runtime-baseline.capture.json",
     };

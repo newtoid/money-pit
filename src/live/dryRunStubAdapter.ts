@@ -57,6 +57,7 @@ export class DryRunStubExecutionAdapter implements ExecutionAdapter {
             submitStatus,
             message,
             orderStatuses,
+            liveSubmissionResult: null,
         };
         this.attempts.set(request.executionAttemptId, {
             request,
@@ -212,6 +213,7 @@ export class DryRunStubExecutionAdapter implements ExecutionAdapter {
             orderLifecycleSummary: this.orderLifecycle.getSummary(),
             externalReconciliationSummary: this.reconciliation.getSummary(),
             externalBalanceReconciliationSummary: this.balanceReconciliation.getSummary(),
+            liveSubmissionSummary: null,
         };
     }
 
@@ -226,5 +228,9 @@ export class DryRunStubExecutionAdapter implements ExecutionAdapter {
                 trackedExecutionAttempts: this.orderLifecycle.getTrackedExecutionAttemptIds().length,
             },
         });
+    }
+
+    getLiveSubmissionSummary() {
+        return null;
     }
 }

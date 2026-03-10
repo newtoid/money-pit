@@ -6,6 +6,7 @@ import { ExternalBalanceReconciliationStore, runNoopBalanceReconciliation } from
 import { normalizeExternalAccountSnapshotIngestion } from "./accountSnapshotIngestion";
 import { normalizeExternalSnapshotIngestion } from "./snapshotIngestion";
 import { captureRuntimeBaselineFromOrderLifecycle } from "./runtimeBaselineCapture";
+import { buildDeniedLiveSubmissionResult, buildLiveOrderSubmissionRequests, evaluateLiveSubmissionGuard, LiveSubmissionConfig, LiveSubmissionScaffoldStore } from "./liveSubmission";
 
 export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
     readonly mode = "future_live_clob" as const;
@@ -14,15 +15,47 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
     private readonly orderLifecycle = new OrderLifecycleStore();
     private readonly reconciliation = new ExternalReconciliationStore();
     private readonly balanceReconciliation = new ExternalBalanceReconciliationStore();
+    private readonly liveSubmission = new LiveSubmissionScaffoldStore();
 
     constructor(
         private readonly opts: {
             liveExecutionEnabled: boolean;
             executionKillSwitch: boolean;
+            liveSubmissionConfig: LiveSubmissionConfig;
         },
     ) {}
 
     submitExecutionAttempt(request: ExecutionRequest): ExecutionSubmitResult {
+        const liveRequests = buildLiveOrderSubmissionRequests(request);
+        const firstGuard = liveRequests[0]
+            ? evaluateLiveSubmissionGuard({
+                request: liveRequests[0],
+                config: this.opts.liveSubmissionConfig,
+            })
+            : {
+                allow: false,
+                reasonCodes: ["live_submission_not_implemented_in_phase"],
+                details: {
+                    liveExecutionEnabled: this.opts.liveSubmissionConfig.liveExecutionEnabled,
+                    executionKillSwitch: this.opts.liveSubmissionConfig.executionKillSwitch,
+                    liveSubmissionMode: this.opts.liveSubmissionConfig.liveSubmissionMode,
+                    maxOrderSize: this.opts.liveSubmissionConfig.maxOrderSize,
+                    requiredEnvironmentConfirmation: this.opts.liveSubmissionConfig.requiredEnvironmentConfirmation,
+                    providedEnvironmentConfirmation: this.opts.liveSubmissionConfig.providedEnvironmentConfirmation,
+                    allowlistedMarkets: [...this.opts.liveSubmissionConfig.allowlistedMarkets],
+                    allowlistedAssets: [...this.opts.liveSubmissionConfig.allowlistedAssets],
+                    attemptedMarketId: request.marketId,
+                    attemptedAssetId: request.legs[0]?.tokenId ?? "",
+                    attemptedSize: request.requestedSize,
+                },
+            };
+        const liveSubmissionResult = buildDeniedLiveSubmissionResult({
+            executionAttemptId: request.executionAttemptId,
+            submissionMode: this.opts.liveSubmissionConfig.liveSubmissionMode,
+            guard: firstGuard,
+            requests: liveRequests,
+        });
+        this.liveSubmission.record(liveSubmissionResult);
         const submitStatus = this.opts.executionKillSwitch
             ? "rejected_execution_kill_switch"
             : (!this.opts.liveExecutionEnabled ? "rejected_live_disabled" : "rejected_live_mode_not_implemented");
@@ -52,6 +85,7 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
             submitStatus,
             message,
             orderStatuses: this.orderLifecycle.getOrderSnapshotsForExecutionAttempt(request.executionAttemptId),
+            liveSubmissionResult,
         };
     }
 
@@ -172,6 +206,7 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
             orderLifecycleSummary: this.orderLifecycle.getSummary(),
             externalReconciliationSummary: this.reconciliation.getSummary(),
             externalBalanceReconciliationSummary: this.balanceReconciliation.getSummary(),
+            liveSubmissionSummary: this.liveSubmission.getSummary(this.opts.liveSubmissionConfig),
         };
     }
 
@@ -186,5 +221,9 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
                 trackedExecutionAttempts: this.orderLifecycle.getTrackedExecutionAttemptIds().length,
             },
         });
+    }
+
+    getLiveSubmissionSummary() {
+        return this.liveSubmission.getSummary(this.opts.liveSubmissionConfig);
     }
 }

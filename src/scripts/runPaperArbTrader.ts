@@ -21,6 +21,16 @@ async function main() {
         executionMode: config.executionMode,
         liveExecutionEnabled: config.liveExecutionEnabled,
         executionKillSwitch: config.executionKillSwitch,
+        liveSubmissionConfig: {
+            liveExecutionEnabled: config.liveExecutionEnabled,
+            executionKillSwitch: config.executionKillSwitch,
+            liveSubmissionMode: config.liveSubmissionMode,
+            allowlistedMarkets: config.liveSubmissionAllowlistedMarkets,
+            allowlistedAssets: config.liveSubmissionAllowlistedAssets,
+            maxOrderSize: config.liveSubmissionMaxOrderSize,
+            requiredEnvironmentConfirmation: config.liveSubmissionRequiredConfirmation,
+            providedEnvironmentConfirmation: config.liveSubmissionConfirmation,
+        },
     });
     logger.info(
         {
@@ -52,6 +62,11 @@ async function main() {
             executionMode: config.executionMode,
             liveExecutionEnabled: config.liveExecutionEnabled,
             executionKillSwitch: config.executionKillSwitch,
+            liveSubmissionMode: config.liveSubmissionMode,
+            liveSubmissionAllowlistedMarkets: config.liveSubmissionAllowlistedMarkets,
+            liveSubmissionAllowlistedAssets: config.liveSubmissionAllowlistedAssets,
+            liveSubmissionMaxOrderSize: config.liveSubmissionMaxOrderSize,
+            liveSubmissionRequiredConfirmationConfigured: Boolean(config.liveSubmissionRequiredConfirmation),
             runtimeBaselineCaptureEnabled: config.runtimeBaselineCaptureEnabled,
             runtimeBaselineCapturePath: config.runtimeBaselineCapturePath,
         },

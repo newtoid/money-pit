@@ -41,4 +41,6 @@ export interface ExecutionAdapter {
     reconcileExecutionState(): ReconciliationSnapshot;
 
     captureInternalRuntimeBaseline(capturedAtMs?: number): InternalRuntimeBaselineCapture;
+
+    getLiveSubmissionSummary?(): import("./types").LiveSubmissionSummary | null;
 }
