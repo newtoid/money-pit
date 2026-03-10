@@ -26,6 +26,7 @@ function sampleInternalOrder(): InternalOrderReconciliationSnapshot {
         knownExternalExecutionId: null,
         knownExternalFillIds: [],
         knownVenueOrderRef: null,
+        externalIdentifierProvenance: "none",
     };
 }
 

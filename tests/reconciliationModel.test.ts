@@ -1,93 +1,20 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { OrderLifecycleStore } from "../src/live/orderLifecycle";
-import { buildExecutionRequest } from "../src/live/buildExecutionRequest";
 import { createExecutionAdapter } from "../src/live/createExecutionAdapter";
 import { buildInternalReconciliationSnapshots, runExternalReconciliation } from "../src/live/reconciliationModel";
-import { Opportunity } from "../src/arbScanner/types";
+import {
+    buildExternalFill,
+    buildExternalOrder,
+    buildFilledOrderStore,
+    buildSyntheticSnapshot,
+    sampleOpportunity,
+} from "./helpers/reconciliationFixtures";
+import { buildExecutionRequest } from "../src/live/buildExecutionRequest";
 
-function sampleOpportunity(): Opportunity {
-    return {
-        market: {
-            marketId: "m1",
-            conditionId: null,
-            slug: "sample-market",
-            question: "sample",
-            eventSlug: null,
-            tagSlugs: [],
-            tagLabels: [],
-            yesTokenId: "yes-1",
-            noTokenId: "no-1",
-            tokenMappingSource: "outcomes",
-            active: true,
-            closed: false,
-            archived: false,
-            endDate: null,
-            liquidityNum: null,
-            volumeNum: null,
-            feeRaw: null,
-            feesEnabled: null,
-        },
-        quote: {
-            yesAsk: 0.4,
-            noAsk: 0.4,
-            yesAskSize: 1,
-            noAskSize: 1,
-            quoteAgeMs: 0,
-        },
-        cost: {
-            explicitCostBuffer: 0,
-            feeCost: 0,
-            totalCostBuffer: 0,
-            notes: [],
-        },
-        totalAllIn: 0.8,
-        edge: 0.2,
-        observedAt: 1000,
-    };
-}
-
-function buildFilledOrderStore() {
-    const store = new OrderLifecycleStore();
-    const request = buildExecutionRequest({
-        executionAttemptId: "attempt-1",
-        source: "replay",
-        opportunity: sampleOpportunity(),
-        requestedSize: 1,
-        createdAtMs: 1000,
+test("reconciliation model reports matching synthetic snapshots with internal external-id coverage", () => {
+    const store = buildFilledOrderStore({
+        externalIdentifierMode: "synthetic_full",
     });
-    store.createFromExecutionRequest(request);
-    store.transitionExecutionAttempt("attempt-1", "submit_requested", "submit_requested_by_adapter", 1000);
-    store.transitionExecutionAttempt("attempt-1", "submitted", "submitted_by_replay_simulated", 1000);
-    store.transitionExecutionAttempt("attempt-1", "acknowledged", "acknowledged_by_stub", 1000);
-    store.transitionExecutionAttempt("attempt-1", "open", "opened_by_stub", 1000);
-    store.applySimulatedUpdate({
-        executionAttemptId: "attempt-1",
-        ts: 1100,
-        legUpdates: [
-            {
-                legId: "attempt-1-yes",
-                terminalState: "filled",
-                reason: "filled_by_replay_simulation",
-                filledSize: 1,
-                averageFillPrice: 0.4,
-            },
-            {
-                legId: "attempt-1-no",
-                terminalState: "filled",
-                reason: "filled_by_replay_simulation",
-                filledSize: 1,
-                averageFillPrice: 0.4,
-            },
-        ],
-        reconciliationPending: true,
-        reconcileNow: true,
-    });
-    return store;
-}
-
-test("reconciliation model reports matching synthetic external snapshots", () => {
-    const store = buildFilledOrderStore();
     const internalOrders = buildInternalReconciliationSnapshots({
         orders: store.getAllOrderRecords(),
         fillEvents: store.getAllFillEvents(),
@@ -97,66 +24,48 @@ test("reconciliation model reports matching synthetic external snapshots", () =>
         input: {
             capturedAtMs: 1200,
             comparisonMode: "synthetic_external_snapshot_compare",
-            snapshot: {
-                provenance: "synthetic_test_snapshot",
-                sourceLabel: "synthetic-test-snapshot",
-                capturedAtMs: 1200,
-                maxSnapshotAgeMs: 1000,
-                trustworthy: true,
+            snapshot: buildSyntheticSnapshot({
+                sourceLabel: "synthetic-full-identifier-match",
                 orders: [
-                    {
+                    buildExternalOrder({
                         internalOrderId: "attempt-1-order-1",
-                        externalOrderId: "external-1",
-                        externalExecutionId: "execution-1",
-                        venueOrderRef: "venue-ref-1",
+                        externalOrderId: "ext-order-yes",
+                        externalExecutionId: "ext-exec-yes",
+                        venueOrderRef: "venue-ref-yes",
                         executionAttemptId: "attempt-1",
                         correlationId: "attempt-1",
                         legId: "attempt-1-yes",
                         tokenId: "yes-1",
-                        status: "open",
-                        filledSize: 1,
-                        averageFillPrice: 0.4,
-                        externalFillCount: 1,
-                        totalFilledNotional: 0.4,
-                        partialFillObserved: false,
-                        observedAtMs: 1200,
-                        rawSourceMetadata: null,
-                    },
-                    {
+                    }),
+                    buildExternalOrder({
                         internalOrderId: "attempt-1-order-2",
-                        externalOrderId: "external-2",
-                        externalExecutionId: "execution-2",
-                        venueOrderRef: "venue-ref-2",
+                        externalOrderId: "ext-order-no",
+                        externalExecutionId: "ext-exec-no",
+                        venueOrderRef: "venue-ref-no",
                         executionAttemptId: "attempt-1",
                         correlationId: "attempt-1",
                         legId: "attempt-1-no",
                         tokenId: "no-1",
-                        status: "open",
-                        filledSize: 1,
-                        averageFillPrice: 0.4,
-                        externalFillCount: 1,
-                        totalFilledNotional: 0.4,
-                        partialFillObserved: false,
-                        observedAtMs: 1200,
-                        rawSourceMetadata: null,
-                    },
+                    }),
                 ],
-                fills: [],
-                rawSourceMetadata: null,
-            },
+            }),
         },
         internalOrders,
     });
     assert.equal(result.matchedOrderCount, 2);
     assert.equal(result.mismatchedOrderCount, 0);
-    assert.equal(result.issueCountsByType.status_mismatch, 0);
-    assert.equal(result.matchCountsByRule.matched_by_execution_attempt_leg, 2);
+    assert.equal(result.matchCountsByRule.matched_by_external_order_id, 2);
     assert.equal(result.matchedOrdersWithAccountingAgreement, 2);
-    assert.equal(result.matchedOrdersWithAccountingDisagreement, 0);
+    assert.equal(result.internalIdentifierCoverage.orders_with_external_order_id, 2);
+    assert.equal(result.internalIdentifierCoverage.orders_with_external_fill_ids, 2);
+    assert.equal(result.internalIdentifierProvenanceCounts.synthetic_fixture, 2);
 });
 
-test("reconciliation model reports mismatches, stale snapshots, and unexpected orders", () => {
-    const store = buildFilledOrderStore();
+test("reconciliation model reports conflicting identifiers, missing ids, and accounting disagreement combinations", () => {
+    const store = buildFilledOrderStore({
+        fillCountPerLeg: 2,
+        externalIdentifierMode: "synthetic_partial",
+    });
     const internalOrders = buildInternalReconciliationSnapshots({
         orders: store.getAllOrderRecords(),
         fillEvents: store.getAllFillEvents(),
@@ -166,69 +75,63 @@ test("reconciliation model reports mismatches, stale snapshots, and unexpected o
         input: {
             capturedAtMs: 5000,
             comparisonMode: "synthetic_external_snapshot_compare",
-            snapshot: {
-                provenance: "synthetic_test_snapshot",
-                sourceLabel: "synthetic-mismatch-snapshot",
-                capturedAtMs: 1200,
-                maxSnapshotAgeMs: 100,
+            snapshot: buildSyntheticSnapshot({
+                sourceLabel: "synthetic-partial-identifier-disagreement",
                 trustworthy: false,
                 orders: [
-                    {
-                        internalOrderId: "attempt-1-order-1",
-                        externalOrderId: null,
+                    buildExternalOrder({
+                        externalOrderId: "ext-order-yes",
                         externalExecutionId: null,
-                        venueOrderRef: null,
                         executionAttemptId: "attempt-1",
                         correlationId: "attempt-1",
                         legId: "attempt-1-yes",
-                        tokenId: "yes-1",
                         status: "filled",
-                        filledSize: 0.5,
+                        filledSize: 1,
                         averageFillPrice: 0.41,
                         externalFillCount: 1,
-                        totalFilledNotional: 0.205,
-                        partialFillObserved: true,
-                        observedAtMs: 1200,
-                        rawSourceMetadata: null,
-                    },
-                    {
-                        internalOrderId: null,
-                        externalOrderId: "external-extra",
+                        totalFilledNotional: 0.41,
+                        partialFillObserved: false,
+                    }),
+                    buildExternalOrder({
+                        externalOrderId: "ext-order-unknown",
                         externalExecutionId: null,
-                        venueOrderRef: null,
-                        executionAttemptId: "attempt-extra",
+                        executionAttemptId: null,
                         correlationId: null,
-                        legId: "attempt-extra-yes",
-                        tokenId: "yes-extra",
+                        legId: null,
                         status: "open",
                         filledSize: 0,
                         averageFillPrice: null,
                         externalFillCount: 0,
                         totalFilledNotional: 0,
                         partialFillObserved: false,
-                        observedAtMs: 1200,
-                        rawSourceMetadata: null,
-                    },
+                    }),
                 ],
-                fills: [],
-                rawSourceMetadata: null,
-            },
+                fills: [
+                    buildExternalFill({
+                        externalFillId: "ext-fill-yes-1",
+                        externalOrderId: "ext-order-yes",
+                        externalExecutionId: null,
+                        executionAttemptId: "attempt-1",
+                        legId: "attempt-1-yes",
+                        filledSize: 1,
+                        averageFillPrice: 0.41,
+                    }),
+                ],
+            }),
         },
         internalOrders,
     });
-    assert.equal(result.staleSnapshotWarningCount, 1);
-    assert.equal(result.missingExternalOrderCount, 1);
     assert.equal(result.unexpectedExternalOrderCount, 1);
-    assert.equal(result.missingExternalOrderIdCount, 1);
-    assert.equal(result.issueCountsByType.fill_quantity_mismatch, 1);
-    assert.equal(result.issueCountsByType.fill_price_mismatch, 1);
-    assert.equal(result.issueCountsByType.status_mismatch, 1);
-    assert.equal(result.unmatchedCountsByReason.partial_identifier_insufficient ?? 0, 1);
+    assert.equal(result.accountingIssueCountsByType.external_internal_avg_price_mismatch, 1);
+    assert.equal(result.accountingIssueCountsByType.external_internal_fill_count_mismatch, 1);
     assert.equal(result.accountingIssueCountsByType.external_internal_notional_mismatch, 1);
-    assert.equal(result.matchedOrdersWithAccountingDisagreement, 1);
+    assert.equal(result.accountingIssueCountsByType.external_internal_partial_fill_mismatch, 1);
+    assert.equal(result.unmatchedCountsByReason.partial_identifier_insufficient, 1);
+    assert.equal(result.internalIdentifierCoverage.orders_with_external_order_id, 2);
+    assert.equal(result.internalIdentifierCoverage.orders_with_external_execution_id ?? 0, 0);
 });
 
-test("replay adapter accepts synthetic reconciliation input and stores summary", () => {
+test("replay adapter stores synthetic provenance and identifier coverage through reconciliation ingestion", () => {
     const adapter = createExecutionAdapter({
         executionMode: "replay_simulated",
         liveExecutionEnabled: false,
@@ -252,59 +155,37 @@ test("replay adapter accepts synthetic reconciliation input and stores summary",
         reconciliationPending: true,
         reconcileNow: true,
     });
-    const result = adapter.reconcileWithExternalState({
+    const ingested = adapter.ingestExternalSnapshot({
+        provenance: "synthetic_test_snapshot",
+        sourceLabel: "synthetic-ingestion-coverage",
         capturedAtMs: 1200,
-        comparisonMode: "synthetic_external_snapshot_compare",
-        snapshot: {
-            provenance: "synthetic_test_snapshot",
-            sourceLabel: "synthetic-adapter-snapshot",
-            capturedAtMs: 1200,
-            maxSnapshotAgeMs: 1000,
-            trustworthy: true,
-            orders: [
-                {
-                    internalOrderId: "attempt-2-order-1",
-                    externalOrderId: "ext-1",
-                    externalExecutionId: "exec-1",
-                    venueOrderRef: "venue-1",
-                    executionAttemptId: "attempt-2",
-                    correlationId: "attempt-2",
-                    legId: "attempt-2-yes",
-                    tokenId: "yes-1",
-                    status: "open",
-                    filledSize: 1,
-                    averageFillPrice: 0.4,
-                    externalFillCount: 1,
-                    totalFilledNotional: 0.4,
-                    partialFillObserved: false,
-                    observedAtMs: 1200,
-                    rawSourceMetadata: null,
+        ingestedAtMs: 1201,
+        trustworthy: true,
+        orders: [
+            {
+                externalOrderId: "synthetic-ext-order-1",
+                executionAttemptId: "attempt-2",
+                legId: "attempt-2-yes",
+                status: "filled",
+                filledSize: 1,
+                averageFillPrice: 0.4,
+                externalFillCount: 1,
+                totalFilledNotional: 0.4,
+                partialFillObserved: false,
+                observedAtMs: 1200,
+                rawSourceMetadata: {
+                    fixtureScenario: "partial-identifiers-only",
                 },
-                {
-                    internalOrderId: "attempt-2-order-2",
-                    externalOrderId: "ext-2",
-                    externalExecutionId: "exec-2",
-                    venueOrderRef: "venue-2",
-                    executionAttemptId: "attempt-2",
-                    correlationId: "attempt-2",
-                    legId: "attempt-2-no",
-                    tokenId: "no-1",
-                    status: "open",
-                    filledSize: 1,
-                    averageFillPrice: 0.4,
-                    externalFillCount: 1,
-                    totalFilledNotional: 0.4,
-                    partialFillObserved: false,
-                    observedAtMs: 1200,
-                    rawSourceMetadata: null,
-                },
-            ],
-            fills: [],
-            rawSourceMetadata: null,
+            },
+        ],
+        fills: [],
+        rawSourceMetadata: {
+            fixtureSuite: "reconciliation-model",
         },
     });
-    assert.equal(result.matchedOrderCount, 2);
-    assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.reconciliationRuns, 1);
-    assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.snapshotsIngestedByProvenance.synthetic_test_snapshot, 1);
-    assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.matchedOrdersWithAccountingAgreement, 2);
+    assert.equal(ingested.normalization.accepted, true);
+    const summary = adapter.reconcileExecutionState().externalReconciliationSummary;
+    assert.equal(summary.snapshotsIngestedByProvenance.synthetic_test_snapshot, 1);
+    assert.equal(summary.internalIdentifierCoverage.orders_without_external_identifiers, 2);
+    assert.equal(summary.internalIdentifierProvenanceCounts.none, 2);
 });
