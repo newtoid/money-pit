@@ -68,6 +68,7 @@ This repo currently implements:
 - explicit authenticated read-only venue integration scaffolding that fetches real venue data into existing normalization layers without enabling trading
 - explicit real-data reconciliation probe/orchestration that runs authenticated read-only snapshots through existing normalization and reconciliation layers on demand
 - explicit internal baseline export/capture scaffolding so reconciliation probes can consume repeatable internal baseline files without inventing internal truth
+ - explicit runtime-state baseline capture hooks so baseline export can populate order/fill baselines from existing internal runtime state where that state already exists
 
 Not yet implemented in this phase:
 
@@ -216,6 +217,13 @@ Not yet implemented in this phase:
     - `empty_internal_baseline_export`
     - `future_runtime_internal_baseline_capture`
   - if no internal source inputs are provided, the exporter writes an explicit empty baseline and reports missing sections
+  - if a runtime capture file exists, `baseline:export` can now consume it automatically and preserve `future_runtime_internal_baseline_capture` provenance
+  - current runtime capture sources are:
+    - execution-adapter order lifecycle state
+    - execution-adapter fill-event state
+    - paper-trader runtime metadata only
+  - current runtime account/balance capture is still unavailable and remains explicit/missing
+  - runtime capture provenance is distinct from empty scaffolds and manual baseline files
   - the real-data reconciliation probe can now consume:
     - `--baseline <combined-file>`
     - `--order-baseline <orders-file>`

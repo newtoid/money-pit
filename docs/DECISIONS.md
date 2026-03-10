@@ -308,6 +308,22 @@ Consequence:
 - `baseline:export` writes machine-readable baseline files with provenance and capture timestamp
 - if no internal inputs are available, the exporter writes an explicit empty baseline and reports missing sections
 - `venue:reconcile` now accepts `--baseline`, `--order-baseline`, and `--account-baseline`
+
+### Capture runtime baseline state at runtime shutdown instead of inferring it inside the exporter
+
+Reason:
+
+- runtime baseline export should be able to reuse real internal order/fill state when that state already exists
+- the exporter should stay read-only and repeatable instead of trying to discover live in-memory state itself
+- current runtime state exists behind the execution adapter order lifecycle store, but not as a general persistent internal ledger
+
+Consequence:
+
+- paper-run shutdown can now write a separate runtime baseline capture file
+- the runtime capture preserves explicit provenance, source status, unavailable sources, and timestamps
+- `baseline:export` can consume that runtime capture file automatically when no manual baseline file is supplied
+- order and fill sections can now be populated from existing runtime state where available
+- internal account/balance baseline remains explicitly unavailable until a trustworthy runtime account source exists
 - reconciliation still never fabricates internal identifiers or internal balances
 - normalization results record warning/reject information before any balance comparison happens
 - balance reconciliation summaries now include account-ingestion provenance counts, malformed reject counts, stale-input counts, and normalization warning counts
