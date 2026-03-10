@@ -1,6 +1,7 @@
 export * from "./config/arb";
 export * from "./config/readOnlyVenue";
 export * from "./config/realDataReconciliation";
+export * from "./config/liveSubmission";
 export * from "./adapters/gamma";
 export * from "./adapters/clobWs";
 export * from "./adapters/fees";
@@ -18,6 +19,7 @@ export * from "./live/executionAdapter";
 export * from "./live/buildExecutionRequest";
 export * from "./live/createExecutionAdapter";
 export * from "./live/orderLifecycle";
+export * from "./live/liveSubmission";
 export * from "./live/balanceReconciliation";
 export * from "./live/accountSnapshotIngestion";
 export * from "./live/internalBaseline";

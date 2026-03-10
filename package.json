@@ -15,6 +15,7 @@
     "venue:readonly": "tsx src/scripts/runReadOnlyVenueProbe.ts",
     "venue:reconcile": "tsx src/scripts/runRealDataReconciliationProbe.ts",
     "baseline:export": "tsx src/scripts/runInternalBaselineExport.ts",
+    "live:submit-probe": "tsx src/scripts/runLiveSubmissionProbe.ts",
     "replay": "tsx scripts/replay.ts",
     "doctor": "tsx scripts/doctor.ts"
   },

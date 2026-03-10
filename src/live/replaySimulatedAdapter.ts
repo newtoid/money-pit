@@ -35,6 +35,7 @@ export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
             submitStatus: "accepted_replay_simulated",
             message: "replay-simulated adapter accepted request without live submission",
             orderStatuses,
+            liveSubmissionResult: null,
         };
         this.submitResults.set(request.executionAttemptId, result);
         return result;
@@ -187,6 +188,7 @@ export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
             orderLifecycleSummary: this.orderLifecycle.getSummary(),
             externalReconciliationSummary: this.reconciliation.getSummary(),
             externalBalanceReconciliationSummary: this.balanceReconciliation.getSummary(),
+            liveSubmissionSummary: null,
         };
     }
 
@@ -201,5 +203,9 @@ export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
                 trackedExecutionAttempts: this.orderLifecycle.getTrackedExecutionAttemptIds().length,
             },
         });
+    }
+
+    getLiveSubmissionSummary() {
+        return null;
     }
 }
