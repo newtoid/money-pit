@@ -1,4 +1,5 @@
 import {
+    AccountSnapshotNormalizationResult,
     BalanceComparisonField,
     BalanceReconciliationComparison,
     BalanceReconciliationInput,
@@ -311,14 +312,20 @@ export function runExternalBalanceReconciliation(args: {
 
 export class ExternalBalanceReconciliationStore {
     private readonly results: BalanceReconciliationResult[] = [];
+    private readonly normalizationResults: AccountSnapshotNormalizationResult[] = [];
 
     record(result: BalanceReconciliationResult) {
         this.results.push(result);
         return result;
     }
 
+    recordNormalization(result: AccountSnapshotNormalizationResult) {
+        this.normalizationResults.push(result);
+        return result;
+    }
+
     getSummary(): ExternalBalanceReconciliationSummary {
-        return this.results.reduce<ExternalBalanceReconciliationSummary>((acc, result) => {
+        const summary = this.results.reduce<ExternalBalanceReconciliationSummary>((acc, result) => {
             acc.reconciliationRuns += 1;
             for (const [issueType, count] of Object.entries(result.issueCountsByType)) {
                 acc.issueCountsByType[issueType] = (acc.issueCountsByType[issueType] ?? 0) + count;
@@ -361,6 +368,28 @@ export class ExternalBalanceReconciliationStore {
             trustworthySnapshotCount: 0,
             untrustworthySnapshotCount: 0,
             snapshotsByProvenance: {},
+            ingestedAccountSnapshotsByProvenance: {},
+            malformedAccountSnapshotRejectCount: 0,
+            staleAccountSnapshotInputCount: 0,
+            accountSnapshotNormalizationWarningCounts: {},
+            accountSnapshotsMissingKeyBalanceFields: 0,
         });
+        for (const normalization of this.normalizationResults) {
+            if (!normalization.accepted) {
+                summary.malformedAccountSnapshotRejectCount += 1;
+                continue;
+            }
+            const snapshot = normalization.snapshot;
+            if (!snapshot) continue;
+            summary.ingestedAccountSnapshotsByProvenance[snapshot.provenance] = (summary.ingestedAccountSnapshotsByProvenance[snapshot.provenance] ?? 0) + 1;
+            let missingKeyBalanceFields = false;
+            for (const warning of normalization.warnings) {
+                summary.accountSnapshotNormalizationWarningCounts[warning.warningType] = (summary.accountSnapshotNormalizationWarningCounts[warning.warningType] ?? 0) + 1;
+                if (warning.warningType === "stale_account_snapshot_input") summary.staleAccountSnapshotInputCount += 1;
+                if (warning.warningType === "missing_balance_field") missingKeyBalanceFields = true;
+            }
+            if (missingKeyBalanceFields) summary.accountSnapshotsMissingKeyBalanceFields += 1;
+        }
+        return summary;
     }
 }

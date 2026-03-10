@@ -3,6 +3,7 @@ import { buildExecutionRequest } from "../../src/live/buildExecutionRequest";
 import { OrderLifecycleStore } from "../../src/live/orderLifecycle";
 import {
     ExternalAccountSnapshot,
+    ExternalAccountSnapshotIngestion,
     ExternalExecutionSnapshot,
     ExternalFillSnapshot,
     InternalAccountBalanceSnapshot,
@@ -258,7 +259,7 @@ export function buildExternalAccountSnapshot(args?: {
 }): ExternalAccountSnapshot {
     return {
         accountId: args?.accountId ?? "external-account-1",
-        provenance: args?.provenance ?? "synthetic_test_snapshot",
+        provenance: args?.provenance ?? "synthetic_test_account_snapshot",
         sourceLabel: args?.sourceLabel ?? "synthetic-external-account",
         capturedAtMs: args?.capturedAtMs ?? 1200,
         maxSnapshotAgeMs: args?.maxSnapshotAgeMs ?? 1000,
@@ -281,5 +282,53 @@ export function buildExternalAccountSnapshot(args?: {
         ],
         reservedBalances: args?.reservedBalances ?? [],
         rawSourceMetadata: null,
+    };
+}
+
+export function buildExternalAccountSnapshotIngestion(args?: {
+    provenance?: ExternalAccountSnapshotIngestion["provenance"];
+    sourceLabel?: string;
+    accountId?: string | null;
+    capturedAtMs?: number | string | null;
+    ingestedAtMs?: number | string | null;
+    maxSnapshotAgeMs?: number | string | null;
+    trustworthy?: boolean | null;
+    assets?: ExternalAccountSnapshotIngestion["assets"];
+    reservedBalances?: ExternalAccountSnapshotIngestion["reservedBalances"];
+    rawSourceMetadata?: Record<string, unknown> | null;
+}): ExternalAccountSnapshotIngestion {
+    return {
+        provenance: args?.provenance ?? "synthetic_test_account_snapshot",
+        sourceLabel: args?.sourceLabel ?? "synthetic-account-ingestion",
+        accountId: args?.accountId ?? "external-account-1",
+        capturedAtMs: args?.capturedAtMs ?? 1200,
+        ingestedAtMs: args?.ingestedAtMs ?? 1250,
+        maxSnapshotAgeMs: args?.maxSnapshotAgeMs ?? 1000,
+        trustworthy: args?.trustworthy ?? true,
+        assets: args?.assets ?? [
+            {
+                assetSymbol: "USDC",
+                availableBalance: "100",
+                reservedBalance: "10",
+                totalBalance: "110",
+                rawSourceMetadata: null,
+            },
+            {
+                assetSymbol: "YES_TOKEN",
+                availableBalance: "2",
+                reservedBalance: "0",
+                totalBalance: "2",
+                rawSourceMetadata: null,
+            },
+        ],
+        reservedBalances: args?.reservedBalances ?? [
+            {
+                assetSymbol: "USDC",
+                reservationType: "open_orders",
+                amount: "10",
+                rawSourceMetadata: null,
+            },
+        ],
+        rawSourceMetadata: args?.rawSourceMetadata ?? null,
     };
 }

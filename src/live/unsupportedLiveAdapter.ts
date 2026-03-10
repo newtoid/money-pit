@@ -1,8 +1,9 @@
 import { ExecutionAdapter } from "./executionAdapter";
-import { BalanceReconciliationInput, BalanceReconciliationResult, CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ExternalSnapshotExecutionIngestion, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, SnapshotIngestionResult, TimeoutResult } from "./types";
+import { AccountSnapshotIngestionResult, BalanceReconciliationInput, BalanceReconciliationResult, CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ExternalAccountSnapshotIngestion, ExternalSnapshotExecutionIngestion, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, SnapshotIngestionResult, TimeoutResult } from "./types";
 import { OrderLifecycleStore } from "./orderLifecycle";
 import { ExternalReconciliationStore, runNoopReconciliation } from "./reconciliationModel";
 import { ExternalBalanceReconciliationStore, runNoopBalanceReconciliation } from "./balanceReconciliation";
+import { normalizeExternalAccountSnapshotIngestion } from "./accountSnapshotIngestion";
 import { normalizeExternalSnapshotIngestion } from "./snapshotIngestion";
 
 export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
@@ -99,6 +100,31 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
                 capturedAtMs: normalization.snapshot.capturedAtMs,
                 comparisonMode: "noop_stub",
                 snapshot: normalization.snapshot,
+            }),
+        };
+    }
+
+    ingestExternalAccountSnapshot(input: ExternalAccountSnapshotIngestion): AccountSnapshotIngestionResult {
+        const normalization = this.balanceReconciliation.recordNormalization(normalizeExternalAccountSnapshotIngestion(input));
+        if (!normalization.accepted || !normalization.snapshot) {
+            return {
+                normalization,
+                reconciliation: null,
+            };
+        }
+        return {
+            normalization,
+            reconciliation: this.reconcileAccountBalances({
+                capturedAtMs: normalization.snapshot.capturedAtMs,
+                comparisonMode: "noop_stub",
+                internalAccount: {
+                    accountId: "future_live_clob_noop_internal_account",
+                    sourceLabel: "future_live_clob_noop",
+                    capturedAtMs: normalization.snapshot.capturedAtMs,
+                    assets: [],
+                    rawSourceMetadata: null,
+                },
+                externalAccount: normalization.snapshot,
             }),
         };
     }
