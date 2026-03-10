@@ -61,6 +61,7 @@ This repo currently implements:
 - explicit external reconciliation model scaffolding behind the adapter boundary
 - explicit external identifier and snapshot-ingestion scaffolding behind the reconciliation model
 - explicit partial-identifier matching-rules scaffolding behind reconciliation
+- explicit external-state reconciliation accounting refinements behind matching
 
 Not yet implemented in this phase:
 
@@ -151,3 +152,7 @@ Not yet implemented in this phase:
   - precedence is explicit and machine-readable
   - ambiguous or conflicting matches remain unresolved instead of being guessed away
   - match outcomes and unmatched reasons are reported separately from normalization warnings
+- External-state reconciliation accounting is now richer but still non-live:
+  - matched orders can compare external fill count, average fill price, filled notional, status progression, and partial-fill state against internal accounting snapshots
+  - insufficient accounting data is reported explicitly through skipped-field counts
+  - reconciliation remains read-only and does not mutate portfolio or order state

@@ -94,10 +94,17 @@
   - deterministic rule precedence
   - ambiguity/conflict/duplicate handling
   - match-rule and unmatched-reason reporting
+- [x] Add richer external-state reconciliation accounting refinements:
+  - fill-count comparison
+  - average-price comparison
+  - filled-notional comparison
+  - status-progression comparison
+  - partial-fill-state comparison
+  - coverage and skipped-field reporting
 
 ## Next Phase
 
-- [ ] Add venue-state reconciliation accounting refinements on top of the non-live matching layer.
+- [ ] Add venue-facing identifier population and richer synthetic external state fixtures on top of the non-live accounting comparison layer.
 
 ## Later
 
