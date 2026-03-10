@@ -213,10 +213,20 @@ tsx scripts/doctor.ts
   - `ExternalOrderSnapshot`
   - `ExternalFillSnapshot`
   - `ExternalExecutionSnapshot`
+  - raw snapshot ingestion shapes for orders, fills, and execution snapshots
   - `ReconciliationInput`
   - `ReconciliationDiff`
   - `ReconciliationIssue`
   - `ReconciliationResult`
+- Optional external identifier fields now modeled include:
+  - `externalOrderId`
+  - `externalExecutionId`
+  - `externalFillId`
+  - `venueOrderRef`
+- Stable snapshot provenance values currently include:
+  - `synthetic_test_snapshot`
+  - `replay_generated_snapshot`
+  - `future_external_api_shape`
 - Stable reconciliation issue types currently include:
   - `status_mismatch`
   - `fill_quantity_mismatch`
@@ -233,6 +243,7 @@ tsx scripts/doctor.ts
   - `replay_simulated`
     - accepts synthetic external snapshots
     - compares them against internal order lifecycle records and fill events
+    - can ingest raw synthetic/external-style snapshot payloads through the normalization layer
   - `future_live_clob`
     - remains noop/deny-only
 - Reconciliation reporting currently includes:
@@ -243,11 +254,16 @@ tsx scripts/doctor.ts
   - missing external order ids
   - stale snapshot warnings
   - unresolved reconciliation counts
+  - snapshots ingested by provenance
+  - snapshots missing external identifiers
+  - malformed snapshot reject counts
+  - normalization warning counts
 - Important:
   - this is still fully non-live
   - no authenticated exchange snapshot source exists
   - no external order ids are sourced from a venue
   - reconciliation output is a structured comparison result, not venue truth
+  - normalization never invents missing external identifiers
 
 ## Execution Attempt Lifecycle
 

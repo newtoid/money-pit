@@ -59,6 +59,7 @@ This repo currently implements:
 - future live-execution abstraction boundary with non-live stub adapters only
 - explicit non-live order lifecycle scaffolding behind the execution adapter boundary
 - explicit external reconciliation model scaffolding behind the adapter boundary
+- explicit external identifier and snapshot-ingestion scaffolding behind the reconciliation model
 
 Not yet implemented in this phase:
 
@@ -135,3 +136,12 @@ Not yet implemented in this phase:
   - replay-simulated adapters can consume synthetic external snapshots for test reconciliation
   - no authenticated venue polling or exchange truth source exists yet
   - reconciliation results must be treated as model output, not venue truth
+- External identifier and snapshot-ingestion scaffolding is now explicit:
+  - external-style identifiers such as `externalOrderId`, `externalExecutionId`, `externalFillId`, and `venueOrderRef` are modeled as optional non-live fields only
+  - a normalization layer converts raw synthetic/external-style snapshot inputs into reconciliation-ready snapshot types
+  - stable provenance values currently include:
+    - `synthetic_test_snapshot`
+    - `replay_generated_snapshot`
+    - `future_external_api_shape`
+  - malformed or stale ingested snapshots are surfaced through explicit warnings or reject counts
+  - no missing external ids are invented silently

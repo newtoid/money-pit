@@ -295,3 +295,22 @@ Consequence:
 - stub adapters expose a noop reconciliation path
 - replay-simulated adapters can consume synthetic external snapshots for tests and reporting
 - no real exchange polling, authentication, or venue-side truth source exists yet
+
+### Add a separate snapshot-ingestion normalization layer before any venue integration
+
+Reason:
+
+- external-style snapshots will arrive in raw shapes that should not be fed directly into reconciliation logic
+- optional future-facing identifiers need to be modeled explicitly without implying they are available now
+- malformed or stale inputs should be counted and surfaced instead of silently coerced into trusted state
+
+Consequence:
+
+- snapshot ingestion and normalization now live under `src/live/`
+- raw ingestion shapes are separate from normalized reconciliation snapshot types
+- optional external identifiers now include `externalOrderId`, `externalExecutionId`, `externalFillId`, and `venueOrderRef`
+- stable provenance values are machine-readable and include:
+  - `synthetic_test_snapshot`
+  - `replay_generated_snapshot`
+  - `future_external_api_shape`
+- reconciliation summaries now include ingestion provenance counts, missing-identifier counts, malformed snapshot reject counts, stale-input counts, and normalization warning counts
