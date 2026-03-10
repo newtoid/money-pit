@@ -334,3 +334,18 @@ Consequence:
   - internal correlation fallback
 - ambiguity, conflicts, and duplicates remain machine-readable outcomes instead of implicit behavior
 - reconciliation summaries now expose match counts by rule, unmatched counts by reason, ambiguous counts, conflicting identifier counts, and duplicate snapshot counts
+
+### Keep richer accounting comparison separate from matching and internal state mutation
+
+Reason:
+
+- once matching exists, accounting comparison is a distinct read-only concern
+- richer external-state comparison needs explicit coverage and skipped-field reporting instead of silent coercion
+- reconciliation should not mutate portfolio or order state in this phase
+
+Consequence:
+
+- richer accounting comparison now lives as a separate layer under `src/live/`
+- matched orders can compare fill count, filled notional, average fill price, status progression, and partial-fill state
+- reconciliation summaries now expose accounting issue counts, comparison coverage counts, skipped-field counts, and agreement vs disagreement counts
+- reconciliation remains non-live and non-mutating

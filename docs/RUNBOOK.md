@@ -286,6 +286,26 @@ tsx scripts/doctor.ts
   - missing identifiers are not invented
   - no probabilistic or venue-inference matching exists in this phase
 
+## External-State Accounting Comparison
+
+- Accounting comparison lives separately from matching and normalization.
+- Current machine-readable accounting mismatch types include:
+  - `external_internal_fill_count_mismatch`
+  - `external_internal_notional_mismatch`
+  - `external_internal_avg_price_mismatch`
+  - `external_internal_status_progression_mismatch`
+  - `external_internal_partial_fill_mismatch`
+- Current reporting includes:
+  - accounting issue counts by type
+  - comparison coverage counts
+  - skipped accounting fields due to insufficient data
+  - matched orders with accounting agreement
+  - matched orders with accounting disagreement
+- Important:
+  - this is still comparison only
+  - no portfolio/accounting mutation happens from reconciliation
+  - missing external accounting fields stay missing and are reported as skipped coverage
+
 ## Execution Attempt Lifecycle
 
 - Replay and paper both emit execution-attempt records.
