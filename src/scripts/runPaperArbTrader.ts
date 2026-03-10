@@ -6,9 +6,15 @@ import { OpportunityScanner } from "../arbScanner/opportunityScanner";
 import { ArbRecorder } from "../arbScanner/recorder";
 import { ExecutionSimulator, buildExecutionSimConfig } from "../arbScanner/executionSimulator";
 import { PaperTrader } from "../arbScanner/paperTrader";
+import { SettlementSource } from "../core/settlementSource";
+import { ResolutionPoller } from "../arbScanner/resolutionPoller";
 
 async function main() {
     const config = loadArbScannerConfig();
+    const settlementSource = new SettlementSource({
+        mode: "placeholder_end_time_full_set_assumption",
+        allowPlaceholderFallback: config.settlementAllowPlaceholderFallback,
+    });
     logger.info(
         {
             maxMarkets: config.maxMarkets,
@@ -21,12 +27,21 @@ async function main() {
             simPartialFillRatio: config.simPartialFillRatio,
             simRequireFullFill: config.simRequireFullFill,
             simRequireKnownSize: config.simRequireKnownSize,
+            paperSummaryIntervalMs: config.paperSummaryIntervalMs,
+            strandedDamageReportingWindowMs: config.strandedDamageReportingWindowMs,
+            openPositionAgeThresholdsMs: config.openPositionAgeThresholdsMs,
             paperMaxTradesPerMarket: config.paperMaxTradesPerMarket,
             killSwitchEnabled: config.killSwitchEnabled,
             riskMaxNotionalPerTrade: config.riskMaxNotionalPerTrade,
             riskMaxConcurrentExposure: config.riskMaxConcurrentExposure,
             riskPerMarketExposureCap: config.riskPerMarketExposureCap,
             riskNoTradeBeforeResolutionSec: config.riskNoTradeBeforeResolutionSec,
+            riskMaxDailyLoss: config.riskMaxDailyLoss,
+            riskDayUtcOffset: config.riskDayUtcOffset,
+            settlementModeUsed: settlementSource.describeSelectionMode(),
+            settlementAllowPlaceholderFallback: config.settlementAllowPlaceholderFallback,
+            resolutionPollingEnabled: config.resolutionPollingEnabled,
+            resolutionPollIntervalMs: config.resolutionPollIntervalMs,
         },
         "Starting paper arbitrage trader",
     );
@@ -52,12 +67,21 @@ async function main() {
         simPartialFillRatio: config.simPartialFillRatio,
         simRequireFullFill: config.simRequireFullFill,
         simRequireKnownSize: config.simRequireKnownSize,
+        paperSummaryIntervalMs: config.paperSummaryIntervalMs,
+        strandedDamageReportingWindowMs: config.strandedDamageReportingWindowMs,
+        openPositionAgeThresholdsMs: config.openPositionAgeThresholdsMs,
         paperMaxTradesPerMarket: config.paperMaxTradesPerMarket,
         killSwitchEnabled: config.killSwitchEnabled,
         riskMaxNotionalPerTrade: config.riskMaxNotionalPerTrade,
         riskMaxConcurrentExposure: config.riskMaxConcurrentExposure,
         riskPerMarketExposureCap: config.riskPerMarketExposureCap,
         riskNoTradeBeforeResolutionSec: config.riskNoTradeBeforeResolutionSec,
+        riskMaxDailyLoss: config.riskMaxDailyLoss,
+        riskDayUtcOffset: config.riskDayUtcOffset,
+        settlementModeUsed: settlementSource.describeSelectionMode(),
+        settlementAllowPlaceholderFallback: config.settlementAllowPlaceholderFallback,
+        resolutionPollingEnabled: config.resolutionPollingEnabled,
+        resolutionPollIntervalMs: config.resolutionPollIntervalMs,
     });
     recorder.recordMarkets(markets);
 
@@ -66,6 +90,7 @@ async function main() {
         maxTradesPerMarket: config.paperMaxTradesPerMarket,
         recorder,
         emitLogs: true,
+        settlementSource,
     });
 
     let scanner: OpportunityScanner | null = null;
@@ -86,8 +111,17 @@ async function main() {
             paperTrader.handleOpportunity(opportunity);
         },
     });
+    const resolutionPoller = new ResolutionPoller({
+        markets,
+        config,
+        onResolutionEvent: (event) => {
+            recorder.recordResolutionEvent(event);
+            paperTrader.recordResolutionEvent(event);
+        },
+    });
 
     liveTracker.start();
+    resolutionPoller.start();
 
     const shutdown = () => {
         const state = paperTrader.getState();
@@ -100,14 +134,35 @@ async function main() {
                 losses: state.losses,
                 averageEdge: state.averageEdge,
                 realizedPnl: state.realizedPnl,
+                dailyRealizedPnl: state.dailyRealizedPnl,
                 maxDrawdown: state.maxDrawdown,
                 grossOpenNotional: state.grossOpenNotional,
                 releasedExposure: state.releasedExposure,
                 denialCounts: state.denialCounts,
+                dailyLossDenials: state.dailyLossDenials,
+                firstDailyLossBlockAt: state.firstDailyLossBlockAt,
+                settlementModeUsed: state.settlementModeUsed,
+                recordedExplicitResolutionEvents: state.recordedExplicitResolutionEvents,
+                resolutionEventProvenanceBreakdown: state.resolutionEventProvenanceBreakdown,
+                trustworthyResolutionEvents: state.trustworthyResolutionEvents,
+                untrustworthyResolutionEvents: state.untrustworthyResolutionEvents,
+                dayRollover: state.dayRollover,
+                unresolvedAging: state.unresolvedAging,
+                settlementCoverage: state.settlementCoverage,
+                executionDamage: state.executionDamage,
+                executionStateSummary: state.executionStateSummary,
+                strandedDamageRecords: state.strandedDamageRecords.length,
+                positionsResolvedByExplicitResolutionEvent: state.positionsResolvedByExplicitResolutionEvent,
+                positionsResolvedByPlaceholderAssumption: state.positionsResolvedByPlaceholderAssumption,
+                unresolvedPositions: state.unresolvedPositions,
+                unresolvedLockedExposure: state.unresolvedLockedExposure,
+                positionsMissingTrustworthySettlementData: state.positionsMissingTrustworthySettlementData,
+                lockedExposureMissingTrustworthySettlementData: state.lockedExposureMissingTrustworthySettlementData,
             },
             "Stopping paper arbitrage trader",
         );
         liveTracker.stop();
+        resolutionPoller.stop();
         recorder.stop();
         process.exit(0);
     };

@@ -1,7 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { logger } from "../logger";
-import { BinaryMarket, Opportunity, RecordedEvent, SimulatedFill, SimulatedPosition, TopOfBook } from "./types";
+import {
+    BinaryMarket,
+    Opportunity,
+    RecordedEvent,
+    RecordedResolutionEvent,
+    SimulatedFill,
+    SimulatedPosition,
+    TopOfBook,
+} from "./types";
 
 type RecorderOpts = {
     enabled: boolean;
@@ -75,6 +83,10 @@ export class ArbRecorder {
 
     recordPositionResolve(position: SimulatedPosition) {
         this.append({ type: "position_resolve", ts: position.resolvedAt ?? Date.now(), position });
+    }
+
+    recordResolutionEvent(resolution: RecordedResolutionEvent) {
+        this.append({ type: "resolution_event", ts: resolution.resolvedAtMs, resolution });
     }
 
     getStatus() {

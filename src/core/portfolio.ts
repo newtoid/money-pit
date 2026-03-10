@@ -1,7 +1,12 @@
 import { Opportunity, SimulatedFill, SimulatedPosition } from "../arbScanner/types";
+import { SettlementStatus } from "./settlementSource";
+import { dayBucketStartMs } from "../util/time";
 
 export type PortfolioSnapshot = {
     realizedPnl: number;
+    dailyRealizedPnl: number;
+    dayBucketStartMs: number;
+    dayUtcOffsetMinutes: number;
     grossOpenNotional: number;
     perMarketExposure: Record<string, number>;
     releasedExposure: number;
@@ -26,7 +31,7 @@ export class SimulatedPortfolio {
     private realizedPnl = 0;
     private releasedExposure = 0;
 
-    openFromFill(opportunity: Opportunity, fill: SimulatedFill): PositionOpenResult {
+    openFromFill(opportunity: Opportunity, fill: SimulatedFill, settlementStatus: SettlementStatus): PositionOpenResult {
         if (fill.status === "rejected" || fill.filledSize <= 0 || fill.totalAllInPerUnit === null) {
             return { opened: false, reason: "fill_not_openable" };
         }
@@ -49,35 +54,35 @@ export class SimulatedPortfolio {
             settlementPayoutPerUnit: null,
             settlementGrossPayout: null,
             realizedPnl: null,
-            resolutionSource: opportunity.market.endDate
-                ? "market_end_full_set_assumption"
-                : "unresolved_missing_end_time",
+            settlementMode: settlementStatus.settlementMode,
+            settlementProvenance: settlementStatus.provenance,
+            settlementTrustworthy: settlementStatus.trustworthy,
         };
 
         this.positions.set(position.id, position);
         return { opened: true, position };
     }
 
-    resolveMaturedPositions(now: number): PositionResolveResult[] {
+    resolvePositions(now: number, getSettlementStatusForPosition: (position: SimulatedPosition) => SettlementStatus): PositionResolveResult[] {
         const resolved: PositionResolveResult[] = [];
         for (const position of this.positions.values()) {
             if (position.state !== "open") continue;
-            if (position.marketEndTimeMs === null || !Number.isFinite(position.marketEndTimeMs)) continue;
-            if (now < position.marketEndTimeMs) continue;
+            const settlementStatus = getSettlementStatusForPosition(position);
+            if (!settlementStatus.isResolved || settlementStatus.payoutPerUnit === null) continue;
 
-            // Placeholder settlement rule for full-set arb:
-            // one complete binary YES+NO set settles to 1.0 total payout.
-            const settlementPayoutPerUnit = 1;
+            const settlementPayoutPerUnit = settlementStatus.payoutPerUnit;
             const settlementGrossPayout = settlementPayoutPerUnit * position.size;
             const realizedPnl = settlementGrossPayout - position.lockedNotional;
             const next: SimulatedPosition = {
                 ...position,
                 state: "resolved",
-                resolvedAt: now,
+                resolvedAt: settlementStatus.resolvedAtMs ?? now,
                 settlementPayoutPerUnit,
                 settlementGrossPayout,
                 realizedPnl,
-                resolutionSource: "market_end_full_set_assumption",
+                settlementMode: settlementStatus.settlementMode,
+                settlementProvenance: settlementStatus.provenance,
+                settlementTrustworthy: settlementStatus.trustworthy,
             };
             this.positions.set(next.id, next);
             this.realizedPnl += realizedPnl;
@@ -92,17 +97,25 @@ export class SimulatedPortfolio {
         return resolved;
     }
 
-    getSnapshot(): PortfolioSnapshot {
+    getSnapshot(now: number, dayUtcOffsetMinutes: number): PortfolioSnapshot {
         const positions = Array.from(this.positions.values());
         const openPositions = positions.filter((position) => position.state === "open");
         const grossOpenNotional = openPositions.reduce((sum, position) => sum + position.lockedNotional, 0);
+        const currentDayBucketStartMs = dayBucketStartMs(now, dayUtcOffsetMinutes);
         const perMarketExposure = openPositions.reduce<Record<string, number>>((acc, position) => {
             acc[position.marketId] = (acc[position.marketId] ?? 0) + position.lockedNotional;
             return acc;
         }, {});
+        const dailyRealizedPnl = positions
+            .filter((position) => position.state === "resolved" && position.resolvedAt !== null && position.realizedPnl !== null)
+            .filter((position) => dayBucketStartMs(position.resolvedAt as number, dayUtcOffsetMinutes) === currentDayBucketStartMs)
+            .reduce((sum, position) => sum + (position.realizedPnl ?? 0), 0);
 
         return {
             realizedPnl: this.realizedPnl,
+            dailyRealizedPnl,
+            dayBucketStartMs: currentDayBucketStartMs,
+            dayUtcOffsetMinutes,
             grossOpenNotional,
             perMarketExposure,
             releasedExposure: this.releasedExposure,

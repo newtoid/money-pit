@@ -73,17 +73,37 @@ Useful env vars:
 - `FEE_COST_OVERRIDE=0.00` if you want to inject a fixed extra fee cost per complete set
 - `ARB_RECORDER_ENABLED=true`
 - `ARB_RECORDER_DIR=data/recordings`
+- `RESOLUTION_POLLING_ENABLED=true`
+- `RESOLUTION_POLL_INTERVAL_MS=30000`
+- `RESOLUTION_REQUEST_TIMEOUT_MS=10000`
+- `PAPER_SUMMARY_INTERVAL_MS=60000`
+- `OPEN_POSITION_AGE_THRESHOLDS_MS=60000,300000,900000`
 - `TRADE_SIZE=5`
 - `SIM_SLIPPAGE_PER_LEG=0`
 - `SIM_PARTIAL_FILL_RATIO=1`
+- `PARTIAL_FILL_MODE=none`
+- `SIM_PARTIAL_FILL_PROBABILITY=0.5`
 - `SIM_REQUIRE_FULL_FILL=true`
 - `SIM_REQUIRE_KNOWN_SIZE=true`
+- `EXECUTION_LATENCY_MS=0`
+- `LEG_EXECUTION_DRIFT_MS=0`
+- `ORDERBOOK_STALENESS_TOLERANCE_MS=5000`
+- `MAX_BOOK_LEVELS_TO_SIMULATE=5`
+- `ALLOW_MULTI_LEVEL_SWEEP=true`
+- `DEPTH_SLIPPAGE_BUFFER_TICKS=0`
+- `QUEUE_PRIORITY_MODE=optimistic_visible_depth`
+- `QUEUE_HAIRCUT_RATIO=0.5`
+- `MIN_VISIBLE_SIZE_TO_ASSUME_FILL=1`
+- `MAX_QUEUE_PENALTY_LEVELS=3`
 - `PAPER_MAX_TRADES_PER_MARKET=1`
 - `KILL_SWITCH_ENABLED=false`
 - `RISK_MAX_NOTIONAL_PER_TRADE=25`
 - `RISK_MAX_CONCURRENT_EXPOSURE=100`
 - `RISK_PER_MARKET_EXPOSURE_CAP=25`
 - `RISK_NO_TRADE_BEFORE_RESOLUTION_SEC=60`
+- `RISK_MAX_DAILY_LOSS=0`
+- `RISK_DAY_UTC_OFFSET=+00:00`
+- `SETTLEMENT_ALLOW_PLACEHOLDER_FALLBACK=true`
 
 Important caveat:
 
@@ -100,12 +120,21 @@ Recorded arb sessions are JSONL and currently include:
 - `sim_fill`
 - `position_open`
 - `position_resolve`
+- `resolution_event`
 
 This is enough to rebuild top-of-book from raw websocket traffic or from normalized top-of-book snapshots, rerun the strategy, and simulate paper fills offline.
+
+Explicit resolution ingestion now has a real recording path:
+
+- live scan and paper modes poll Gamma market metadata for tracked market IDs
+- when Gamma reports a tracked market as closed, the system normalizes that into a `resolution_event`
+- the normalized event is recorded to JSONL and consumed by replay
+- synthetic/manual `resolution_event` lines still work for tests, but they are no longer the main path
 
 Current hard risk guards for replay and paper trading:
 
 - kill switch
+- max daily realized loss
 - max notional per trade
 - max concurrent gross open notional
 - per-market gross open notional cap
@@ -113,14 +142,120 @@ Current hard risk guards for replay and paper trading:
 - top-of-book ask-size guard on both legs
 - no-trade window before market resolution
 
+Replay execution realism assumptions:
+
+- opportunity detection happens first
+- replay then schedules leg A at `T + EXECUTION_LATENCY_MS`
+- leg B is attempted after leg A with `LEG_EXECUTION_DRIFT_MS`
+- execution timestamps are quantized to the next replayed market-data event, not an interpolated sub-event clock
+- if the most recent book for a leg is older than `ORDERBOOK_STALENESS_TOLERANCE_MS`, that leg fails as stale
+- when recorded raw `ws_market` payloads contain visible ask ladders, replay can sweep multiple ask levels per leg
+- when a recording only contains `book_top`, replay falls back to a single visible level and cannot simulate meaningful depth
+- delta-style top updates do not reconstruct a full ladder on their own, so depth replay is only as good as the recorded ladder snapshots
+- queue realism uses only visible recorded depth; recordings do not contain true queue position or resting-order age
+- partial fill modes are:
+  - `none`
+  - `probabilistic`
+  - `liquidity_limited`
+- queue modes are:
+  - `optimistic_visible_depth`: visible size is treated as fillable
+  - `conservative_queue_haircut`: visible size is discounted by `QUEUE_HAIRCUT_RATIO`, with stricter discounts on deeper levels
+  - `strict_top_priority_block`: only the top visible level can fill, and only if it meets `MIN_VISIBLE_SIZE_TO_ASSUME_FILL`
+- `probabilistic` mode uses a deterministic hash, not `Math.random`, so replay remains repeatable
+- portfolio accounting only books the matched full-set size; unmatched leg exposure is reported as execution damage, not settled inventory
+- visible depth is still only simulated visible liquidity, not proof of queue-priority fillability
+
+Operator reporting now emphasizes current stuck state, not just aggregate totals:
+
+- open positions count
+- unresolved locked exposure
+- open positions missing trustworthy settlement path
+- locked exposure missing trustworthy settlement path
+- oldest / newest / average open position age
+- top unresolved markets by oldest stuck exposure
+- current day bucket start/end and UTC offset
+- rollover count plus denials before/after rollover
+- settlement provenance coverage
+- execution damage totals and damage by type
+
+Execution lifecycle is now modeled explicitly before any live execution scaffolding:
+
+- replay and paper both create an `ExecutionAttempt`
+- the machine states are:
+  - `detected`
+  - `queued_for_execution`
+  - `leg_a_pending`
+  - `leg_a_filled`
+  - `leg_a_failed`
+  - `leg_b_pending`
+  - `leg_b_filled`
+  - `leg_b_failed`
+  - `fully_filled`
+  - `partially_filled`
+  - `failed`
+  - `invalidated`
+  - `expired`
+- transitions carry stable machine-readable reasons
+- replay drives the machine from scheduled leg attempts, leg results, invalidation, and expiry
+- paper uses the same abstraction for audit/reporting consistency while still following the simpler atomic paper-fill path
+- stranded one-leg outcomes remain execution damage only; they are not promoted into portfolio positions
+
 Current paper lifecycle assumptions:
 
 - a simulated full-set entry opens an explicit position
 - locked exposure is the entry all-in notional for that full set
-- settlement happens when `now >= market end time`
-- settlement payout currently assumes a complete binary YES+NO set pays `1.0 * size`
-- if end time is missing, the position remains open and unresolved
+- settlement is sourced through an explicit settlement-source abstraction
+- supported settlement modes are:
+  - `placeholder_end_time_full_set_assumption`
+  - `explicit_recorded_resolution_event`
+- paper mode currently runs in explicit placeholder mode:
+  - `placeholder_end_time_full_set_assumption`
+- replay prefers `explicit_recorded_resolution_event` when recorded, and only falls back to placeholder settlement if `SETTLEMENT_ALLOW_PLACEHOLDER_FALLBACK=true`
+- replay reports whether it used only placeholder fallback
+- placeholder settlement assumes a complete binary YES+NO set pays `1.0 * size` at market end time
+- if no explicit resolution event exists and market end time is missing, the position remains open and unresolved
 - unrealized PnL is not currently marked to market; only realized PnL after settlement is tracked
+- daily loss uses realized PnL only within a fixed UTC-offset calendar day
+
+`resolution_event` JSONL lines use:
+
+```json
+{
+  "type": "resolution_event",
+  "ts": 1710000300000,
+  "resolution": {
+    "marketId": "123",
+    "resolvedAtMs": 1710000300000,
+    "settlementStatus": "resolved",
+    "settlementMode": "explicit_recorded_resolution_event",
+    "payoutPerUnit": 1,
+    "provenance": "recorded_external_resolution_source",
+    "sourceLabel": "gamma_market_poll",
+    "trustworthy": true,
+    "rawSourceMetadata": {
+      "resolvedAtMsDerivedFrom": "gamma_closed_time"
+    }
+  }
+}
+```
+
+Stable provenance values:
+
+- `synthetic_test_event`
+- `recorded_external_resolution_source`
+- `placeholder_end_time_assumption`
+
+Stable source labels:
+
+- `synthetic_manual_input`
+- `gamma_market_poll`
+- `placeholder_end_time_assumption`
+
+Important settlement caveat:
+
+- placeholder settlement is intentionally loud and marked untrustworthy
+- open positions without a trustworthy settlement path are reported separately
+- locked exposure tied up in those positions is reported separately so unresolved junk does not disappear into aggregate exposure
 
 ## Backtesting
 

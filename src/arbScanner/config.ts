@@ -13,11 +13,29 @@ export type ArbScannerConfig = {
     feeCostOverride: number | null;
     recorderEnabled: boolean;
     recorderDir: string;
+    resolutionPollingEnabled: boolean;
+    resolutionPollIntervalMs: number;
+    resolutionRequestTimeoutMs: number;
+    paperSummaryIntervalMs: number;
+    strandedDamageReportingWindowMs: number;
+    openPositionAgeThresholdsMs: number[];
     tradeSize: number;
     simSlippagePerLeg: number;
     simPartialFillRatio: number;
+    simPartialFillMode: "none" | "probabilistic" | "liquidity_limited";
+    simPartialFillProbability: number;
     simRequireFullFill: boolean;
     simRequireKnownSize: boolean;
+    executionLatencyMs: number;
+    legExecutionDriftMs: number;
+    orderbookStalenessToleranceMs: number;
+    maxBookLevelsToSimulate: number;
+    allowMultiLevelSweep: boolean;
+    depthSlippageBufferTicks: number;
+    queuePriorityMode: "optimistic_visible_depth" | "conservative_queue_haircut" | "strict_top_priority_block";
+    queueHaircutRatio: number;
+    minVisibleSizeToAssumeFill: number;
+    maxQueuePenaltyLevels: number;
     paperMaxTradesPerMarket: number;
     replayLatencyMs: number;
     killSwitchEnabled: boolean;
@@ -25,6 +43,9 @@ export type ArbScannerConfig = {
     riskMaxConcurrentExposure: number;
     riskPerMarketExposureCap: number;
     riskNoTradeBeforeResolutionSec: number;
+    riskMaxDailyLoss: number;
+    riskDayUtcOffset: string;
+    settlementAllowPlaceholderFallback: boolean;
 };
 
 function envNumber(name: string, fallback: number): number {
@@ -48,6 +69,12 @@ function envBool(name: string, fallback: boolean): boolean {
     return fallback;
 }
 
+function envEnum<T extends string>(name: string, fallback: T, allowed: readonly T[]): T {
+    const raw = envString(name);
+    if (!raw) return fallback;
+    return (allowed as readonly string[]).includes(raw) ? raw as T : fallback;
+}
+
 function normalizeSet(raw: string | null): Set<string> {
     if (!raw) return new Set<string>();
     return new Set(
@@ -55,6 +82,16 @@ function normalizeSet(raw: string | null): Set<string> {
             .map((value) => value.trim().toLowerCase())
             .filter(Boolean),
     );
+}
+
+function normalizeNumberList(raw: string | null, fallback: number[]): number[] {
+    if (!raw) return fallback;
+    const values = raw
+        .split(",")
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isFinite(value) && value >= 0)
+        .map((value) => Math.floor(value));
+    return values.length > 0 ? values : fallback;
 }
 
 export function loadArbScannerConfig(): ArbScannerConfig {
@@ -78,11 +115,36 @@ export function loadArbScannerConfig(): ArbScannerConfig {
         })(),
         recorderEnabled: envBool("ARB_RECORDER_ENABLED", false),
         recorderDir: envString("ARB_RECORDER_DIR") ?? "data/recordings",
+        resolutionPollingEnabled: envBool("RESOLUTION_POLLING_ENABLED", true),
+        resolutionPollIntervalMs: Math.max(1000, Math.floor(envNumber("RESOLUTION_POLL_INTERVAL_MS", 30000))),
+        resolutionRequestTimeoutMs: Math.max(1000, Math.floor(envNumber("RESOLUTION_REQUEST_TIMEOUT_MS", 10000))),
+        paperSummaryIntervalMs: Math.max(1000, Math.floor(envNumber("PAPER_SUMMARY_INTERVAL_MS", 60000))),
+        strandedDamageReportingWindowMs: Math.max(0, Math.floor(envNumber("STRANDED_DAMAGE_REPORTING_WINDOW_MS", 0))),
+        openPositionAgeThresholdsMs: normalizeNumberList(
+            envString("OPEN_POSITION_AGE_THRESHOLDS_MS"),
+            [60_000, 300_000, 900_000],
+        ),
         tradeSize: Math.max(0.01, envNumber("TRADE_SIZE", 5)),
         simSlippagePerLeg: Math.max(0, envNumber("SIM_SLIPPAGE_PER_LEG", 0)),
         simPartialFillRatio: Math.max(0, Math.min(1, envNumber("SIM_PARTIAL_FILL_RATIO", 1))),
+        simPartialFillMode: envEnum("PARTIAL_FILL_MODE", "none", ["none", "probabilistic", "liquidity_limited"] as const),
+        simPartialFillProbability: Math.max(0, Math.min(1, envNumber("SIM_PARTIAL_FILL_PROBABILITY", 0.5))),
         simRequireFullFill: envBool("SIM_REQUIRE_FULL_FILL", true),
         simRequireKnownSize: envBool("SIM_REQUIRE_KNOWN_SIZE", true),
+        executionLatencyMs: Math.max(0, Math.floor(envNumber("EXECUTION_LATENCY_MS", 0))),
+        legExecutionDriftMs: Math.max(0, Math.floor(envNumber("LEG_EXECUTION_DRIFT_MS", 0))),
+        orderbookStalenessToleranceMs: Math.max(0, Math.floor(envNumber("ORDERBOOK_STALENESS_TOLERANCE_MS", 5000))),
+        maxBookLevelsToSimulate: Math.max(1, Math.floor(envNumber("MAX_BOOK_LEVELS_TO_SIMULATE", 5))),
+        allowMultiLevelSweep: envBool("ALLOW_MULTI_LEVEL_SWEEP", true),
+        depthSlippageBufferTicks: Math.max(0, Math.floor(envNumber("DEPTH_SLIPPAGE_BUFFER_TICKS", 0))),
+        queuePriorityMode: envEnum(
+            "QUEUE_PRIORITY_MODE",
+            "optimistic_visible_depth",
+            ["optimistic_visible_depth", "conservative_queue_haircut", "strict_top_priority_block"] as const,
+        ),
+        queueHaircutRatio: Math.max(0, Math.min(1, envNumber("QUEUE_HAIRCUT_RATIO", 0.5))),
+        minVisibleSizeToAssumeFill: Math.max(0, envNumber("MIN_VISIBLE_SIZE_TO_ASSUME_FILL", 1)),
+        maxQueuePenaltyLevels: Math.max(1, Math.floor(envNumber("MAX_QUEUE_PENALTY_LEVELS", 3))),
         paperMaxTradesPerMarket: Math.max(1, Math.floor(envNumber("PAPER_MAX_TRADES_PER_MARKET", 1))),
         replayLatencyMs: Math.max(0, Math.floor(envNumber("REPLAY_LATENCY_MS", 0))),
         killSwitchEnabled: envBool("KILL_SWITCH_ENABLED", false),
@@ -90,5 +152,8 @@ export function loadArbScannerConfig(): ArbScannerConfig {
         riskMaxConcurrentExposure: Math.max(0, envNumber("RISK_MAX_CONCURRENT_EXPOSURE", 100)),
         riskPerMarketExposureCap: Math.max(0, envNumber("RISK_PER_MARKET_EXPOSURE_CAP", 25)),
         riskNoTradeBeforeResolutionSec: Math.max(0, Math.floor(envNumber("RISK_NO_TRADE_BEFORE_RESOLUTION_SEC", 60))),
+        riskMaxDailyLoss: Math.max(0, envNumber("RISK_MAX_DAILY_LOSS", 0)),
+        riskDayUtcOffset: envString("RISK_DAY_UTC_OFFSET") ?? "+00:00",
+        settlementAllowPlaceholderFallback: envBool("SETTLEMENT_ALLOW_PLACEHOLDER_FALLBACK", true),
     };
 }

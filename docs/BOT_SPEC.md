@@ -48,6 +48,14 @@ This repo currently implements:
 - replay/backtest skeleton with simulated execution assumptions
 - deterministic risk engine shared by replay and paper trading
 - explicit simulated position lifecycle with settlement and exposure release
+- explicit settlement-source abstraction with visible fallback behavior
+- trusted settlement-event ingestion path that records normalized `resolution_event` entries
+- replay execution model with explicit detection latency, leg drift, and partial-fill modes
+- replay depth-aware leg fills using visible ask ladders when recordings preserve them
+- replay-only queue/fill-priority haircut model over visible depth
+- operator reporting for unresolved exposure, day rollover, and execution damage
+- explicit execution-attempt state machine shared by replay and paper paths
+- explicit stranded-damage lifecycle separate from portfolio positions
 
 Not yet implemented in this phase:
 
@@ -66,6 +74,40 @@ Not yet implemented in this phase:
 - Near resolution is currently defined as `seconds_to_resolution <= RISK_NO_TRADE_BEFORE_RESOLUTION_SEC`.
 - Exposure is currently measured as gross locked notional capital across open simulated positions.
 - Settlement is currently sourced from a placeholder full-set assumption:
-  - if a complete YES+NO set is open at or after market end, total payout is assumed to be `1.0 * size`
-  - if market end time is unavailable, the position remains open and unresolved
+  - supported modes are `placeholder_end_time_full_set_assumption` and `explicit_recorded_resolution_event`
+  - paper mode currently uses the placeholder path for settlement decisions, but can record explicit external resolution events
+  - replay prefers explicit recorded resolution events when present
+  - if placeholder fallback is enabled and no explicit resolution event exists, a complete YES+NO set is assumed to pay `1.0 * size` at market end
+  - if explicit resolution is unavailable and market end time is unavailable, the position remains open and unresolved
+  - placeholder settlement is marked untrustworthy in logs and reports
+  - explicit external resolution ingestion currently uses Gamma market polling and stable machine-readable provenance values
 - Unrealized PnL is not currently marked to market.
+- Daily loss is currently evaluated from realized PnL only.
+- Daily boundary is a fixed calendar day under `RISK_DAY_UTC_OFFSET` (for example `+00:00`).
+- Replay execution is event-quantized:
+  - leg attempts happen on or after their scheduled timestamps when the next replay event arrives
+  - unmatched legs are reported as execution damage, not promoted into portfolio positions
+- Replay depth modeling is limited by recorded data:
+  - raw `ws_market` events may preserve ladders for depth-aware replay
+  - `book_top`-only recordings cannot support real depth sweep simulation
+  - top-only deltas do not reconstruct a full ladder by themselves
+- Queue realism is also limited by recorded data:
+  - recordings do not contain true queue position
+  - queue/fill-priority realism is a conservative haircut model over visible size, not a fill oracle
+- Operator reporting must keep unresolved risk visible:
+  - current open/unresolved counts
+  - unresolved locked exposure
+  - missing trustworthy settlement coverage
+  - position aging
+  - rollover bucket summaries
+- Execution lifecycle modeling is explicit but still simplified:
+  - replay and paper both create execution-attempt records
+  - paper uses the same state machine for audit/reporting consistency, not because replay-only queue/depth behavior leaked into paper execution
+  - paper still follows an atomic simulated-fill path
+  - replay drives leg-by-leg states, invalidation, and expiry from simulated outcomes
+  - stranded one-leg outcomes remain execution damage, not portfolio positions
+- Stranded damage is now modeled explicitly:
+  - damage states are `detected_damage`, `open_damage`, `resolved_damage`, and `expired_damage`
+  - replay resolves open damage into a summarized loss bucket at replay lifecycle end
+  - paper keeps damage open unless `STRANDED_DAMAGE_REPORTING_WINDOW_MS` expires it
+  - stranded damage is auditable by record, type, state, age, and originating execution terminal state

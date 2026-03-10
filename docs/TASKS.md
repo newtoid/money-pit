@@ -23,24 +23,60 @@
   - near-resolution no-trade guard
 - [x] Add explicit simulated position lifecycle:
   - open position records
-  - settlement at market end
+  - settlement through an explicit settlement source
   - realized PnL on settlement
   - exposure release on resolution
   - portfolio snapshot with gross exposure and per-market exposure
+- [x] Add max daily loss guard to shared pure risk engine.
+- [x] Improve settlement realism:
+  - explicit recorded resolution events when available
+  - visible placeholder fallback path
+  - unresolved/trustworthiness reporting for locked exposure
+- [x] Add trusted settlement-event ingestion:
+  - Gamma-backed resolution polling for tracked markets
+  - normalized `resolution_event` recording
+  - provenance and trustworthiness reporting
+- [x] Improve replay execution realism:
+  - execution latency
+  - leg-by-leg drift
+  - stale orderbook tolerance
+  - explicit partial-fill modes
+  - execution outcome reporting
+- [x] Add depth-aware replay realism:
+  - multi-level visible ask consumption
+  - configurable ladder depth limit
+  - top-level vs multi-level fill reporting
+  - depth-limited partial-fill reporting
+- [x] Add replay-only queue / fill-priority realism:
+  - visible-depth haircut modes
+  - queue-limited fill reporting
+  - visible-to-fillable haircut metrics
+- [x] Polish unresolved-position and rollover reporting:
+  - current-state summaries
+  - unresolved aging
+  - settlement coverage
+  - day-bucket rollover visibility
+  - execution damage breakdown
+- [x] Add explicit execution-attempt state machine:
+  - shared replay/paper execution-attempt records
+  - explicit states and transition reasons
+  - timeout / expiry handling
+  - execution-state reporting
+- [x] Harden stranded-leg lifecycle and damage accounting:
+  - explicit stranded-damage records separate from positions
+  - explicit damage states and machine-readable types
+  - replay end-of-session resolution for damage records
+  - optional paper reporting-window expiry
+  - open/resolved/outstanding exposure reporting
 
 ## Next Phase
 
-- [ ] Extend risk engine:
-  - max daily loss
-  - configurable per-strategy no-trade mode overrides
-  - richer portfolio state inputs
-- [ ] Improve settlement realism:
-  - explicit recorded resolution events when available
-  - non-placeholder resolution source selection
-  - handling for markets without trustworthy end/resolution metadata
+- [ ] Improve replay realism further:
+  - queue-position / fill-priority realism refinement
+  - fill-priority assumptions under sparse ladder updates
 
 ## Later
 
-- [ ] Add execution abstraction with order state machine.
+- [ ] Add live execution abstraction using the execution-attempt model.
 - [ ] Add reconciliation hooks.
 - [ ] Add compact summary metrics and alarms.

@@ -4,6 +4,7 @@ import { discoverBinaryMarkets } from "../arbScanner/marketDiscovery";
 import { LiveBookTracker } from "../arbScanner/bookTracker";
 import { OpportunityScanner } from "../arbScanner/opportunityScanner";
 import { ArbRecorder } from "../arbScanner/recorder";
+import { ResolutionPoller } from "../arbScanner/resolutionPoller";
 
 async function main() {
     const config = loadArbScannerConfig();
@@ -19,6 +20,8 @@ async function main() {
             watchlistSize: config.watchlistSlugs.size,
             feeCostOverride: config.feeCostOverride,
             recorderEnabled: config.recorderEnabled,
+            resolutionPollingEnabled: config.resolutionPollingEnabled,
+            resolutionPollIntervalMs: config.resolutionPollIntervalMs,
         },
         "Starting read-only Polymarket arbitrage scanner",
     );
@@ -40,6 +43,8 @@ async function main() {
         costBuffer: config.costBuffer,
         quoteStaleMs: config.quoteStaleMs,
         tradeSize: config.tradeSize,
+        resolutionPollingEnabled: config.resolutionPollingEnabled,
+        resolutionPollIntervalMs: config.resolutionPollIntervalMs,
     });
     recorder.recordMarkets(markets);
 
@@ -55,12 +60,19 @@ async function main() {
     scanner = new OpportunityScanner(markets, liveTracker, config, {
         onOpportunity: (opportunity) => recorder.recordOpportunity(opportunity),
     });
+    const resolutionPoller = new ResolutionPoller({
+        markets,
+        config,
+        onResolutionEvent: (event) => recorder.recordResolutionEvent(event),
+    });
 
     liveTracker.start();
+    resolutionPoller.start();
 
     const shutdown = () => {
         logger.info("Stopping Polymarket arbitrage scanner");
         liveTracker.stop();
+        resolutionPoller.stop();
         recorder.stop();
         process.exit(0);
     };

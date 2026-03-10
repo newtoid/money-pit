@@ -4,6 +4,7 @@ import { PortfolioSnapshot } from "./portfolio";
 
 export type TradeRiskReasonCode =
     | "kill_switch_enabled"
+    | "daily_loss_limit_reached"
     | "trade_notional_above_limit"
     | "concurrent_exposure_above_limit"
     | "per_market_exposure_above_limit"
@@ -33,6 +34,10 @@ export type TradeRiskDecision = {
         requestedSize: number;
         proposedTradeNotional: number;
         grossOpenNotional: number;
+        dailyRealizedPnl: number;
+        dayBucketStartMs: number;
+        dayUtcOffsetMinutes: number;
+        maxDailyLoss: number;
         resultingGrossOpenNotional: number;
         currentMarketOpenNotional: number;
         resultingMarketOpenNotional: number;
@@ -74,6 +79,9 @@ export function evaluateTradeRisk(input: TradeRiskInput): TradeRiskDecision {
     if (config.killSwitchEnabled) {
         reasonCodes.push("kill_switch_enabled");
     }
+    if (config.riskMaxDailyLoss > 0 && portfolioState.dailyRealizedPnl <= -config.riskMaxDailyLoss) {
+        reasonCodes.push("daily_loss_limit_reached");
+    }
     if (proposedTradeNotional > config.riskMaxNotionalPerTrade) {
         reasonCodes.push("trade_notional_above_limit");
     }
@@ -108,6 +116,10 @@ export function evaluateTradeRisk(input: TradeRiskInput): TradeRiskDecision {
             requestedSize,
             proposedTradeNotional: Number(proposedTradeNotional.toFixed(6)),
             grossOpenNotional: Number(grossOpenNotional.toFixed(6)),
+            dailyRealizedPnl: Number(portfolioState.dailyRealizedPnl.toFixed(6)),
+            dayBucketStartMs: portfolioState.dayBucketStartMs,
+            dayUtcOffsetMinutes: portfolioState.dayUtcOffsetMinutes,
+            maxDailyLoss: config.riskMaxDailyLoss,
             resultingGrossOpenNotional: Number(resultingGrossOpenNotional.toFixed(6)),
             currentMarketOpenNotional: Number(currentMarketOpenNotional.toFixed(6)),
             resultingMarketOpenNotional: Number(resultingMarketOpenNotional.toFixed(6)),
