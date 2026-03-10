@@ -144,6 +144,7 @@ test("reconciliation model reports matching synthetic external snapshots", () =>
     assert.equal(result.matchedOrderCount, 2);
     assert.equal(result.mismatchedOrderCount, 0);
     assert.equal(result.issueCountsByType.status_mismatch, 0);
+    assert.equal(result.matchCountsByRule.matched_by_execution_attempt_leg, 2);
 });
 
 test("reconciliation model reports mismatches, stale snapshots, and unexpected orders", () => {
@@ -208,6 +209,7 @@ test("reconciliation model reports mismatches, stale snapshots, and unexpected o
     assert.equal(result.issueCountsByType.fill_quantity_mismatch, 1);
     assert.equal(result.issueCountsByType.fill_price_mismatch, 1);
     assert.equal(result.issueCountsByType.status_mismatch, 1);
+    assert.equal(result.unmatchedCountsByReason.partial_identifier_insufficient ?? 0, 1);
 });
 
 test("replay adapter accepts synthetic reconciliation input and stores summary", () => {

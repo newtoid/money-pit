@@ -192,6 +192,10 @@ export type InternalOrderReconciliationSnapshot = {
     updatedAtMs: number;
     filledSize: number;
     averageFillPrice: number | null;
+    knownExternalOrderId: string | null;
+    knownExternalExecutionId: string | null;
+    knownExternalFillIds: string[];
+    knownVenueOrderRef: string | null;
 };
 
 export type ExternalOrderStatus =
@@ -276,6 +280,30 @@ export type ReconciliationIssue = {
     details: Record<string, number | string | boolean | null>;
 };
 
+export type ReconciliationMatchRule =
+    | "matched_by_external_order_id"
+    | "matched_by_external_execution_id"
+    | "matched_by_external_fill_id"
+    | "matched_by_execution_attempt_leg"
+    | "matched_by_internal_correlation";
+
+export type ReconciliationMatchingIssueType =
+    | "unmatched_missing_identifiers"
+    | "partial_identifier_insufficient"
+    | "unmatched_ambiguous_candidates"
+    | "conflicting_identifier_data"
+    | "duplicate_external_snapshot"
+    | "duplicate_internal_candidates";
+
+export type ReconciliationMatchingOutcome = {
+    candidateType: "order" | "fill";
+    externalReference: string;
+    matchedInternalOrderId: string | null;
+    matchRule: ReconciliationMatchRule | null;
+    issueTypes: ReconciliationMatchingIssueType[];
+    details: Record<string, number | string | boolean | null>;
+};
+
 export type ReconciliationDiff = {
     orderId: string | null;
     externalOrderId: string | null;
@@ -299,6 +327,11 @@ export type ReconciliationResult = {
     snapshotSourceLabel: string;
     snapshotTrustworthy: boolean;
     issueCountsByType: Record<ReconciliationIssueType, number>;
+    matchCountsByRule: Record<string, number>;
+    unmatchedCountsByReason: Record<string, number>;
+    ambiguousMatchCount: number;
+    conflictingIdentifierCount: number;
+    duplicateExternalSnapshotCount: number;
     matchedOrderCount: number;
     mismatchedOrderCount: number;
     missingExternalOrderCount: number;
@@ -306,6 +339,7 @@ export type ReconciliationResult = {
     missingExternalOrderIdCount: number;
     staleSnapshotWarningCount: number;
     unresolvedReconciliationCount: number;
+    matchingOutcomes: ReconciliationMatchingOutcome[];
     diffs: ReconciliationDiff[];
     issues: ReconciliationIssue[];
 };
@@ -387,6 +421,11 @@ export type SnapshotIngestionResult = {
 export type ExternalReconciliationSummary = {
     reconciliationRuns: number;
     issueCountsByType: Record<string, number>;
+    matchCountsByRule: Record<string, number>;
+    unmatchedCountsByReason: Record<string, number>;
+    ambiguousMatchCount: number;
+    conflictingIdentifierCount: number;
+    duplicateExternalSnapshotCount: number;
     matchedOrderCount: number;
     mismatchedOrderCount: number;
     missingExternalOrderCount: number;
