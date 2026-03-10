@@ -1,7 +1,6 @@
 import {
     ExecutionMode,
     ExternalReconciliationSummary,
-    ExternalOrderSnapshot,
     FillEvent,
     InternalOrderReconciliationSnapshot,
     OrderLifecycleRecord,
@@ -13,6 +12,7 @@ import {
     ReconciliationResult,
     SnapshotNormalizationResult,
 } from "./types";
+import { matchExternalSnapshots } from "./reconciliationMatching";
 
 const EPSILON = 1e-9;
 
@@ -48,18 +48,8 @@ function sumFillEvents(fillEvents: FillEvent[]) {
     };
 }
 
-function normalizeExternalFilledSize(order: ExternalOrderSnapshot) {
+function normalizeExternalFilledSize(order: { filledSize: number | null }) {
     return order.filledSize ?? 0;
-}
-
-function matchKeyForExternal(order: ExternalOrderSnapshot) {
-    if (order.internalOrderId) return `internal:${order.internalOrderId}`;
-    if (order.executionAttemptId && order.legId) return `attempt-leg:${order.executionAttemptId}:${order.legId}`;
-    return null;
-}
-
-function matchKeyForInternal(order: InternalOrderReconciliationSnapshot) {
-    return [`internal:${order.orderId}`, `attempt-leg:${order.executionAttemptId}:${order.legId}`];
 }
 
 function makeIssue(args: {
@@ -109,6 +99,10 @@ export function buildInternalReconciliationSnapshots(args: {
             updatedAtMs: order.updatedAtMs,
             filledSize: fillSummary.filledSize,
             averageFillPrice: fillSummary.averageFillPrice,
+            knownExternalOrderId: null,
+            knownExternalExecutionId: null,
+            knownExternalFillIds: [],
+            knownVenueOrderRef: null,
         };
     });
 }
@@ -136,6 +130,11 @@ export function runNoopReconciliation(args: {
         snapshotSourceLabel: args.input.snapshot.sourceLabel,
         snapshotTrustworthy: args.input.snapshot.trustworthy,
         issueCountsByType,
+        matchCountsByRule: {},
+        unmatchedCountsByReason: {},
+        ambiguousMatchCount: 0,
+        conflictingIdentifierCount: 0,
+        duplicateExternalSnapshotCount: 0,
         matchedOrderCount: 0,
         mismatchedOrderCount: 0,
         missingExternalOrderCount: 0,
@@ -143,6 +142,7 @@ export function runNoopReconciliation(args: {
         missingExternalOrderIdCount: 0,
         staleSnapshotWarningCount: 0,
         unresolvedReconciliationCount: 0,
+        matchingOutcomes: [],
         diffs: [],
         issues: [],
     };
@@ -165,14 +165,24 @@ export function runExternalReconciliation(args: {
     } satisfies Record<ReconciliationIssueType, number>;
     const issues: ReconciliationIssue[] = [];
     const diffs: ReconciliationDiff[] = [];
-
-    const externalByKey = new Map<string, ExternalOrderSnapshot>();
-    for (const externalOrder of args.input.snapshot.orders) {
-        const key = matchKeyForExternal(externalOrder);
-        if (key) externalByKey.set(key, externalOrder);
-    }
-
-    const matchedExternalKeys = new Set<string>();
+    const matching = matchExternalSnapshots({
+        internalOrders: args.internalOrders,
+        externalOrders: args.input.snapshot.orders,
+        externalFills: args.input.snapshot.fills,
+    });
+    const matchCountsByRule = matching.allOutcomes.reduce<Record<string, number>>((acc, item) => {
+        if (!item.matchRule) return acc;
+        acc[item.matchRule] = (acc[item.matchRule] ?? 0) + 1;
+        return acc;
+    }, {});
+    const unmatchedCountsByReason = matching.allOutcomes.reduce<Record<string, number>>((acc, item) => {
+        for (const issueType of item.issueTypes) {
+            acc[issueType] = (acc[issueType] ?? 0) + 1;
+        }
+        return acc;
+    }, {});
+    const orderMatchByReference = new Map(matching.orderOutcomes.map((item) => [item.externalReference, item]));
+    const internalOrderById = new Map(args.internalOrders.map((item) => [item.orderId, item]));
 
     if (
         args.input.snapshot.maxSnapshotAgeMs !== null
@@ -194,57 +204,54 @@ export function runExternalReconciliation(args: {
         }));
     }
 
-    for (const internalOrder of args.internalOrders) {
-        const matchedKey = matchKeyForInternal(internalOrder).find((key) => externalByKey.has(key)) ?? null;
-        const externalOrder = matchedKey ? externalByKey.get(matchedKey)! : null;
-        if (matchedKey) matchedExternalKeys.add(matchedKey);
-
+    const matchedInternalOrderIds = new Set<string>();
+    for (const externalOrder of args.input.snapshot.orders) {
+        const externalReference = [
+            "order",
+            externalOrder.externalOrderId ?? "no-order-id",
+            externalOrder.externalExecutionId ?? "no-exec-id",
+            "no-fill-id",
+            externalOrder.executionAttemptId ?? "no-attempt",
+            externalOrder.legId ?? "no-leg",
+            externalOrder.correlationId ?? "no-correlation",
+        ].join(":");
+        const matchOutcome = orderMatchByReference.get(externalReference) ?? null;
         const diffIssueTypes: ReconciliationIssueType[] = [];
-        if (!externalOrder) {
-            diffIssueTypes.push("missing_external_order");
-            issueCountsByType.missing_external_order += 1;
+        const internalOrder = matchOutcome?.matchedInternalOrderId
+            ? internalOrderById.get(matchOutcome.matchedInternalOrderId) ?? null
+            : null;
+
+        if (!internalOrder) {
+            diffIssueTypes.push("unexpected_external_order");
+            issueCountsByType.unexpected_external_order += 1;
             issues.push(makeIssue({
-                issueType: "missing_external_order",
-                orderId: internalOrder.orderId,
-                externalOrderId: null,
-                executionAttemptId: internalOrder.executionAttemptId,
-                legId: internalOrder.legId,
-                message: "no external order snapshot matched the internal order",
+                issueType: "unexpected_external_order",
+                orderId: null,
+                externalOrderId: externalOrder.externalOrderId,
+                executionAttemptId: externalOrder.executionAttemptId,
+                legId: externalOrder.legId,
+                message: "external order snapshot did not produce a unique internal match",
                 details: {
-                    internalStatus: internalOrder.comparableStatus,
+                    matchIssues: matchOutcome?.issueTypes.join(",") ?? "no_match",
                 },
             }));
-            if (internalOrder.terminalState === null) {
-                diffIssueTypes.push("unresolved_reconciliation_state");
-                issueCountsByType.unresolved_reconciliation_state += 1;
-                issues.push(makeIssue({
-                    issueType: "unresolved_reconciliation_state",
-                    orderId: internalOrder.orderId,
-                    externalOrderId: null,
-                    executionAttemptId: internalOrder.executionAttemptId,
-                    legId: internalOrder.legId,
-                    message: "internal order remains non-terminal without external confirmation",
-                    details: {
-                        internalStatus: internalOrder.comparableStatus,
-                    },
-                }));
-            }
             diffs.push({
-                orderId: internalOrder.orderId,
-                externalOrderId: null,
-                executionAttemptId: internalOrder.executionAttemptId,
-                legId: internalOrder.legId,
+                orderId: null,
+                externalOrderId: externalOrder.externalOrderId,
+                executionAttemptId: externalOrder.executionAttemptId,
+                legId: externalOrder.legId,
                 matched: false,
-                internalStatus: internalOrder.comparableStatus,
-                externalStatus: null,
-                internalFilledSize: internalOrder.filledSize,
-                externalFilledSize: null,
-                internalAverageFillPrice: roundIfFinite(internalOrder.averageFillPrice),
-                externalAverageFillPrice: null,
+                internalStatus: null,
+                externalStatus: externalOrder.status,
+                internalFilledSize: null,
+                externalFilledSize: normalizeExternalFilledSize(externalOrder),
+                internalAverageFillPrice: null,
+                externalAverageFillPrice: roundIfFinite(externalOrder.averageFillPrice),
                 issueTypes: diffIssueTypes,
             });
             continue;
         }
+        matchedInternalOrderIds.add(internalOrder.orderId);
 
         if (!externalOrder.externalOrderId) {
             diffIssueTypes.push("missing_external_order_id");
@@ -350,35 +357,34 @@ export function runExternalReconciliation(args: {
         });
     }
 
-    for (const externalOrder of args.input.snapshot.orders) {
-        const key = matchKeyForExternal(externalOrder);
-        if (key && matchedExternalKeys.has(key)) continue;
-        issueCountsByType.unexpected_external_order += 1;
+    for (const internalOrder of args.internalOrders) {
+        if (matchedInternalOrderIds.has(internalOrder.orderId)) continue;
+        issueCountsByType.missing_external_order += 1;
         issues.push(makeIssue({
-            issueType: "unexpected_external_order",
-            orderId: externalOrder.internalOrderId,
-            externalOrderId: externalOrder.externalOrderId,
-            executionAttemptId: externalOrder.executionAttemptId,
-            legId: externalOrder.legId,
-            message: "external order snapshot did not match any internal order",
+            issueType: "missing_external_order",
+            orderId: internalOrder.orderId,
+            externalOrderId: null,
+            executionAttemptId: internalOrder.executionAttemptId,
+            legId: internalOrder.legId,
+            message: "internal order has no matched external snapshot",
             details: {
-                externalStatus: externalOrder.status,
+                internalStatus: internalOrder.comparableStatus,
             },
         }));
-        diffs.push({
-            orderId: externalOrder.internalOrderId,
-            externalOrderId: externalOrder.externalOrderId,
-            executionAttemptId: externalOrder.executionAttemptId,
-            legId: externalOrder.legId,
-            matched: false,
-            internalStatus: null,
-            externalStatus: externalOrder.status,
-            internalFilledSize: null,
-            externalFilledSize: normalizeExternalFilledSize(externalOrder),
-            internalAverageFillPrice: null,
-            externalAverageFillPrice: roundIfFinite(externalOrder.averageFillPrice),
-            issueTypes: ["unexpected_external_order"],
-        });
+        if (internalOrder.terminalState === null) {
+            issueCountsByType.unresolved_reconciliation_state += 1;
+            issues.push(makeIssue({
+                issueType: "unresolved_reconciliation_state",
+                orderId: internalOrder.orderId,
+                externalOrderId: null,
+                executionAttemptId: internalOrder.executionAttemptId,
+                legId: internalOrder.legId,
+                message: "internal order remains non-terminal without external confirmation",
+                details: {
+                    internalStatus: internalOrder.comparableStatus,
+                },
+            }));
+        }
     }
 
     const matchedOrderCount = diffs.filter((item) => item.matched && item.issueTypes.length === 0).length;
@@ -392,6 +398,11 @@ export function runExternalReconciliation(args: {
         snapshotSourceLabel: args.input.snapshot.sourceLabel,
         snapshotTrustworthy: args.input.snapshot.trustworthy,
         issueCountsByType,
+        matchCountsByRule,
+        unmatchedCountsByReason,
+        ambiguousMatchCount: (unmatchedCountsByReason.unmatched_ambiguous_candidates ?? 0) + (unmatchedCountsByReason.duplicate_internal_candidates ?? 0),
+        conflictingIdentifierCount: unmatchedCountsByReason.conflicting_identifier_data ?? 0,
+        duplicateExternalSnapshotCount: unmatchedCountsByReason.duplicate_external_snapshot ?? 0,
         matchedOrderCount,
         mismatchedOrderCount,
         missingExternalOrderCount: issueCountsByType.missing_external_order,
@@ -399,6 +410,7 @@ export function runExternalReconciliation(args: {
         missingExternalOrderIdCount: issueCountsByType.missing_external_order_id,
         staleSnapshotWarningCount: issueCountsByType.stale_external_snapshot,
         unresolvedReconciliationCount: issueCountsByType.unresolved_reconciliation_state,
+        matchingOutcomes: matching.allOutcomes,
         diffs,
         issues,
     };
@@ -425,6 +437,15 @@ export class ExternalReconciliationStore {
     getSummary(): ExternalReconciliationSummary {
         const summary = this.results.reduce<ExternalReconciliationSummary>((acc, result) => {
             acc.reconciliationRuns += 1;
+            for (const [rule, count] of Object.entries(result.matchCountsByRule)) {
+                acc.matchCountsByRule[rule] = (acc.matchCountsByRule[rule] ?? 0) + count;
+            }
+            for (const [reason, count] of Object.entries(result.unmatchedCountsByReason)) {
+                acc.unmatchedCountsByReason[reason] = (acc.unmatchedCountsByReason[reason] ?? 0) + count;
+            }
+            acc.ambiguousMatchCount += result.ambiguousMatchCount;
+            acc.conflictingIdentifierCount += result.conflictingIdentifierCount;
+            acc.duplicateExternalSnapshotCount += result.duplicateExternalSnapshotCount;
             acc.matchedOrderCount += result.matchedOrderCount;
             acc.mismatchedOrderCount += result.mismatchedOrderCount;
             acc.missingExternalOrderCount += result.missingExternalOrderCount;
@@ -444,6 +465,11 @@ export class ExternalReconciliationStore {
         }, {
             reconciliationRuns: 0,
             issueCountsByType: {},
+            matchCountsByRule: {},
+            unmatchedCountsByReason: {},
+            ambiguousMatchCount: 0,
+            conflictingIdentifierCount: 0,
+            duplicateExternalSnapshotCount: 0,
             matchedOrderCount: 0,
             mismatchedOrderCount: 0,
             missingExternalOrderCount: 0,
