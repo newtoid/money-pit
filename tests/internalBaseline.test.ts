@@ -59,6 +59,15 @@ test("internal baseline export writes combined and split files", () => {
     assert.equal(fs.existsSync(combinedPath), true);
     assert.equal(fs.existsSync(orderPath), true);
     assert.equal(fs.existsSync(accountPath), true);
+    assert.deepEqual(result.sectionSourceStatus, {
+        orders: "combined_baseline",
+        fills: "empty",
+        account: "combined_baseline",
+    });
+    assert.deepEqual(result.sourceCounts, {
+        combined_baseline: 2,
+        empty: 1,
+    });
 });
 
 test("internal baseline loader supports combined baseline files", () => {
@@ -107,4 +116,9 @@ test("internal baseline loader supports combined baseline files", () => {
     assert.equal(loaded.orders.length, 1);
     assert.equal(loaded.account?.accountId, "acct-1");
     assert.deepEqual(loaded.missingSections, ["fills", "account"]);
+    assert.deepEqual(loaded.sectionSources, {
+        orders: "combined_baseline",
+        fills: "empty",
+        account: "empty",
+    });
 });

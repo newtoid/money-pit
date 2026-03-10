@@ -1,7 +1,7 @@
 import { logger } from "../logger";
 import { ArbRecorder } from "./recorder";
 import { ExecutionSimulator } from "./executionSimulator";
-import { BinaryMarket, Opportunity, PaperTraderState, RecordedResolutionEvent, ReplayExecutionOutcome, SimulatedFill } from "./types";
+import { BinaryMarket, Opportunity, PaperTraderRuntimeBaselineCapture, PaperTraderState, RecordedResolutionEvent, ReplayExecutionOutcome, SimulatedFill } from "./types";
 import { ArbScannerConfig } from "./config";
 import { SimulatedPortfolio } from "../core/portfolio";
 import { evaluateTradeRisk, TradeRiskDecision } from "../core/riskEngine";
@@ -553,6 +553,29 @@ export class PaperTrader {
             ...attempt,
             history: attempt.history.map((item) => ({ ...item })),
         }));
+    }
+
+    captureRuntimeBaseline(capturedAtMs = this.currentTimeMs || Date.now()): PaperTraderRuntimeBaselineCapture {
+        const state = this.getState();
+        return {
+            provenance: "future_runtime_internal_baseline_capture",
+            sourceLabel: "paper_trader_runtime_state",
+            capturedAtMs,
+            account: {
+                snapshot: null,
+                available: false,
+                reason: "unavailable_runtime_account_state",
+            },
+            rawSourceMetadata: {
+                tradeAttempts: state.tradeAttempts,
+                positionOpens: state.positionOpens,
+                positionsResolved: state.positionsResolved,
+                realizedPnl: state.realizedPnl,
+                grossOpenNotional: state.grossOpenNotional,
+                unresolvedPositions: state.unresolvedPositions,
+                unresolvedLockedExposure: state.unresolvedLockedExposure,
+            },
+        };
     }
 
     private countDenial(reason: string, ts = this.currentTimeMs || Date.now()) {

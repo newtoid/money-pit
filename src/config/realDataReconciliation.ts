@@ -2,6 +2,7 @@ export type RealDataReconciliationConfig = {
     enabled: boolean;
     outputPath: string | null;
     baselinePath: string | null;
+    runtimeCapturePath: string | null;
     internalOrderSnapshotPath: string | null;
     internalAccountSnapshotPath: string | null;
 };
@@ -22,6 +23,7 @@ export function loadRealDataReconciliationConfig(): RealDataReconciliationConfig
         enabled: envFlag(process.env.REAL_DATA_RECONCILIATION_ENABLED, true),
         outputPath: envString(process.env.REAL_DATA_RECONCILIATION_OUTPUT_PATH),
         baselinePath: envString(process.env.REAL_DATA_INTERNAL_BASELINE_PATH),
+        runtimeCapturePath: envString(process.env.REAL_DATA_INTERNAL_RUNTIME_CAPTURE_PATH) ?? "data/baselines/runtime-baseline.capture.json",
         internalOrderSnapshotPath: envString(process.env.REAL_DATA_INTERNAL_ORDER_SNAPSHOT_PATH),
         internalAccountSnapshotPath: envString(process.env.REAL_DATA_INTERNAL_ACCOUNT_SNAPSHOT_PATH),
     };

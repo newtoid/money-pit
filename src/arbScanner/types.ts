@@ -367,6 +367,18 @@ export type PaperTraderState = {
     strandedDamageRecords: StrandedDamageRecord[];
 };
 
+export type PaperTraderRuntimeBaselineCapture = {
+    provenance: "future_runtime_internal_baseline_capture";
+    sourceLabel: string;
+    capturedAtMs: number;
+    account: {
+        snapshot: import("../live/types").InternalAccountBaselineSnapshot | null;
+        available: boolean;
+        reason: "unavailable_runtime_account_state";
+    };
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
 export type RecordedResolutionEvent = {
     marketId: string;
     resolvedAtMs: number;

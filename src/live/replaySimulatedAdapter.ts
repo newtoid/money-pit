@@ -5,6 +5,7 @@ import { buildInternalReconciliationSnapshots, ExternalReconciliationStore, runE
 import { ExternalBalanceReconciliationStore, runExternalBalanceReconciliation } from "./balanceReconciliation";
 import { normalizeExternalAccountSnapshotIngestion } from "./accountSnapshotIngestion";
 import { normalizeExternalSnapshotIngestion } from "./snapshotIngestion";
+import { captureRuntimeBaselineFromOrderLifecycle } from "./runtimeBaselineCapture";
 
 export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
     readonly mode = "replay_simulated" as const;
@@ -187,5 +188,18 @@ export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
             externalReconciliationSummary: this.reconciliation.getSummary(),
             externalBalanceReconciliationSummary: this.balanceReconciliation.getSummary(),
         };
+    }
+
+    captureInternalRuntimeBaseline(capturedAtMs = Date.now()) {
+        return captureRuntimeBaselineFromOrderLifecycle({
+            sourceLabel: "replay_simulated_execution_adapter_runtime",
+            capturedAtMs,
+            orderLifecycleStore: this.orderLifecycle,
+            accountSnapshot: null,
+            rawSourceMetadata: {
+                adapterMode: this.mode,
+                trackedExecutionAttempts: this.orderLifecycle.getTrackedExecutionAttemptIds().length,
+            },
+        });
     }
 }

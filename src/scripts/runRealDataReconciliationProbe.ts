@@ -28,6 +28,7 @@ async function main() {
         probeEnabled: probeConfig.enabled,
         outputPath: outputPathArg ?? probeConfig.outputPath,
         baselinePath: baselinePathArg ?? probeConfig.baselinePath,
+        runtimeCapturePath: probeConfig.runtimeCapturePath,
         internalOrderSnapshotPath: orderBaselinePathArg ?? probeConfig.internalOrderSnapshotPath,
         internalAccountSnapshotPath: accountBaselinePathArg ?? probeConfig.internalAccountSnapshotPath,
     });
@@ -48,6 +49,7 @@ async function main() {
             enabled: probeConfig.enabled,
             outputPath: outputPathArg ?? probeConfig.outputPath,
             baselinePath: baselinePathArg ?? probeConfig.baselinePath,
+            runtimeCapturePath: probeConfig.runtimeCapturePath,
             internalOrderSnapshotPath: orderBaselinePathArg ?? probeConfig.internalOrderSnapshotPath,
             internalAccountSnapshotPath: accountBaselinePathArg ?? probeConfig.internalAccountSnapshotPath,
         },
