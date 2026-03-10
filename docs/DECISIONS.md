@@ -340,6 +340,22 @@ Consequence:
 - guard posture is deny-by-default and includes execution enablement, kill switch, mode selection, allowlists, max size, and environment confirmation
 - even a fully passing guard result still ends in a structured deny because live submission is not implemented in this phase
 - a manual `live:submit-probe` command now exercises the denied path without placing orders
+
+### Introduce a one-shot live order pilot path before any autonomous live execution
+
+Reason:
+
+- the next useful safety step is one intentional microscopic real order, not broader submit/cancel scaffolding
+- the pilot must stay completely manual and isolated from strategy runners
+- post-submit observability matters as much as guard posture
+
+Consequence:
+
+- a separate one-shot pilot script now exists for explicit manual invocation only
+- the pilot reuses the guarded live submission model but requires `LIVE_SUBMISSION_MODE=one_shot_live_pilot`
+- the pilot is constrained by dedicated allowlists, confirmation value matching, and a hard absolute tiny-size cap
+- the pilot writes a structured result file plus an internal order baseline file for immediate follow-up reconciliation
+- there are still no retries, loops, autonomous resubmissions, cancel loops, or portfolio/accounting mutations
 - reconciliation still never fabricates internal identifiers or internal balances
 - normalization results record warning/reject information before any balance comparison happens
 - balance reconciliation summaries now include account-ingestion provenance counts, malformed reject counts, stale-input counts, and normalization warning counts

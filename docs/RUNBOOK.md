@@ -228,6 +228,50 @@ Important:
 - even if all guard checks pass, the probe still returns `live_submission_not_implemented_in_phase`
 - the probe is only for validating guard posture and denied-result reporting
 
+## One-Shot Live Order Pilot
+
+Run the one-shot live pilot manually:
+
+```bash
+npm run live:submit-once -- --market <market-id> --asset <asset-id> --price <limit-price> --size <tiny-size> --tick-size <tick-size> --confirm <confirmation-value>
+```
+
+Pilot env vars:
+
+- `LIVE_ORDER_PILOT_ENABLED`
+- `LIVE_EXECUTION_ENABLED`
+- `EXECUTION_KILL_SWITCH`
+- `LIVE_SUBMISSION_MODE`
+- `LIVE_ORDER_PILOT_ALLOWLIST_MARKETS`
+- `LIVE_ORDER_PILOT_ALLOWLIST_ASSETS`
+- `LIVE_ORDER_PILOT_MAX_ORDER_SIZE`
+- `LIVE_ORDER_PILOT_CONFIRMATION_VALUE`
+- `LIVE_ORDER_PILOT_RESULT_DIR`
+- `LIVE_ORDER_PILOT_BASELINE_DIR`
+
+Required safe posture for any real pilot attempt:
+
+- `LIVE_ORDER_PILOT_ENABLED=true`
+- `LIVE_EXECUTION_ENABLED=true`
+- `EXECUTION_KILL_SWITCH=false`
+- `LIVE_SUBMISSION_MODE=one_shot_live_pilot`
+- requested market is in `LIVE_ORDER_PILOT_ALLOWLIST_MARKETS`
+- requested asset is in `LIVE_ORDER_PILOT_ALLOWLIST_ASSETS`
+- requested size is less than or equal to `LIVE_ORDER_PILOT_MAX_ORDER_SIZE`
+- configured pilot max size is less than or equal to the hard-coded absolute pilot cap
+- `--confirm` matches `LIVE_ORDER_PILOT_CONFIRMATION_VALUE`
+
+Important:
+
+- this path submits at most one explicit order per invocation
+- no loops, retries, market making, or strategy orchestration exist here
+- it writes:
+  - a structured result JSON file
+  - an internal order baseline JSON file
+- the result includes an immediate follow-up reconciliation command when a baseline file is written
+- it does not mutate internal portfolio/accounting state
+- there is still no autonomous trading behavior
+
 ## Important Operational Notes
 
 - Replay assumes deterministic strategy evaluation over recorded data.
@@ -327,6 +371,7 @@ Important:
     - denied submission count
     - guard failure counts
     - configured safety posture
+  - the one-shot live pilot is separate from this deny-only adapter path and requires its own explicit pilot mode and CLI invocation
 
 ## Order Lifecycle Model
 

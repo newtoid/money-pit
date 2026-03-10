@@ -70,6 +70,7 @@ This repo currently implements:
 - explicit internal baseline export/capture scaffolding so reconciliation probes can consume repeatable internal baseline files without inventing internal truth
 - explicit runtime-state baseline capture hooks so baseline export can populate order/fill baselines from existing internal runtime state where that state already exists
 - explicit live-order submission scaffolding with deny-by-default guards and a safe probe path
+- explicit one-shot live order submission pilot path for a single manual microscopic order under extreme safeguards
 
 Not yet implemented in this phase:
 
@@ -147,6 +148,7 @@ Not yet implemented in this phase:
   - current stable live-submission modes are:
     - `disabled`
     - `future_live_clob_guarded`
+    - `one_shot_live_pilot`
   - current stable live-submission guard reasons include:
     - `live_execution_disabled`
     - `execution_kill_switch_enabled`
@@ -158,6 +160,29 @@ Not yet implemented in this phase:
     - `environment_confirmation_missing`
     - `live_submission_not_implemented_in_phase`
   - a safe manual probe now exists to exercise the denied path without placing orders
+- One-shot live pilot submission is now scoped separately from autonomous execution:
+  - it lives in a dedicated live-order-pilot layer and manual script
+  - it does not connect to replay loops, paper loops, or strategy runners
+  - it only supports a single explicit order submission attempt per manual invocation
+  - it requires all of:
+    - `LIVE_ORDER_PILOT_ENABLED=true`
+    - `LIVE_EXECUTION_ENABLED=true`
+    - `EXECUTION_KILL_SWITCH=false`
+    - `LIVE_SUBMISSION_MODE=one_shot_live_pilot`
+    - explicit pilot market allowlist
+    - explicit pilot asset allowlist
+    - explicit pilot confirmation value match
+    - explicit pilot max size cap at or below the hard-coded absolute pilot cap
+    - explicit CLI args for market, asset, price, size, and tick size
+  - it writes:
+    - a structured pilot result JSON file
+    - an internal order baseline JSON file for immediate reconciliation follow-up
+  - it reports a terminal state of:
+    - `denied`
+    - `submitted_acknowledged`
+    - `submitted_unknown`
+    - `failed`
+  - it does not retry, resubmit, cancel, or mutate portfolio/accounting state
 - Order lifecycle scaffolding is now explicit and separate from execution attempts:
   - execution attempts model the strategy-level arb attempt lifecycle
   - order lifecycle records model per-leg order objects that would sit behind the adapter boundary
