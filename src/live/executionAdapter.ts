@@ -3,9 +3,11 @@ import {
     ExecutionRequest,
     ExecutionStatusResult,
     ExecutionSubmitResult,
+    ExternalSnapshotExecutionIngestion,
     ReconciliationInput,
     ReconciliationResult,
     ReconciliationSnapshot,
+    SnapshotIngestionResult,
     SimulatedOrderLifecycleUpdate,
     TimeoutResult,
 } from "./types";
@@ -20,6 +22,8 @@ export interface ExecutionAdapter {
     getExecutionStatus(executionAttemptId: string): ExecutionStatusResult;
 
     recordSimulatedOrderLifecycle(update: SimulatedOrderLifecycleUpdate): ExecutionStatusResult;
+
+    ingestExternalSnapshot(input: ExternalSnapshotExecutionIngestion): SnapshotIngestionResult;
 
     reconcileWithExternalState(input: ReconciliationInput): ReconciliationResult;
 

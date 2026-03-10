@@ -1,7 +1,8 @@
 import { ExecutionAdapter } from "./executionAdapter";
-import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, TimeoutResult } from "./types";
+import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ExternalSnapshotExecutionIngestion, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, SnapshotIngestionResult, TimeoutResult } from "./types";
 import { OrderLifecycleStore } from "./orderLifecycle";
 import { buildInternalReconciliationSnapshots, ExternalReconciliationStore, runExternalReconciliation } from "./reconciliationModel";
+import { normalizeExternalSnapshotIngestion } from "./snapshotIngestion";
 
 export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
     readonly mode = "replay_simulated" as const;
@@ -86,6 +87,24 @@ export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
             message: "replay-simulated order lifecycle updated from replay outcome",
             orderStatuses: this.orderLifecycle.getOrderSnapshotsForExecutionAttempt(update.executionAttemptId),
             fillEvents: this.orderLifecycle.getFillEventsForExecutionAttempt(update.executionAttemptId),
+        };
+    }
+
+    ingestExternalSnapshot(input: ExternalSnapshotExecutionIngestion): SnapshotIngestionResult {
+        const normalization = this.reconciliation.recordNormalization(normalizeExternalSnapshotIngestion(input));
+        if (!normalization.accepted || !normalization.snapshot) {
+            return {
+                normalization,
+                reconciliation: null,
+            };
+        }
+        return {
+            normalization,
+            reconciliation: this.reconcileWithExternalState({
+                capturedAtMs: normalization.snapshot.capturedAtMs,
+                comparisonMode: "synthetic_external_snapshot_compare",
+                snapshot: normalization.snapshot,
+            }),
         };
     }
 

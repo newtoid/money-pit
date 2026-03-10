@@ -11,6 +11,7 @@ import {
     ReconciliationIssue,
     ReconciliationIssueType,
     ReconciliationResult,
+    SnapshotNormalizationResult,
 } from "./types";
 
 const EPSILON = 1e-9;
@@ -131,6 +132,7 @@ export function runNoopReconciliation(args: {
         adapterMode: args.adapterMode,
         comparisonMode: "noop_stub",
         capturedAtMs: args.input.capturedAtMs,
+        snapshotProvenance: args.input.snapshot.provenance,
         snapshotSourceLabel: args.input.snapshot.sourceLabel,
         snapshotTrustworthy: args.input.snapshot.trustworthy,
         issueCountsByType,
@@ -386,6 +388,7 @@ export function runExternalReconciliation(args: {
         adapterMode: args.adapterMode,
         comparisonMode: "synthetic_external_snapshot_compare",
         capturedAtMs: args.input.capturedAtMs,
+        snapshotProvenance: args.input.snapshot.provenance,
         snapshotSourceLabel: args.input.snapshot.sourceLabel,
         snapshotTrustworthy: args.input.snapshot.trustworthy,
         issueCountsByType,
@@ -403,9 +406,15 @@ export function runExternalReconciliation(args: {
 
 export class ExternalReconciliationStore {
     private readonly results: ReconciliationResult[] = [];
+    private readonly normalizationResults: SnapshotNormalizationResult[] = [];
 
     record(result: ReconciliationResult) {
         this.results.push(result);
+        return result;
+    }
+
+    recordNormalization(result: SnapshotNormalizationResult) {
+        this.normalizationResults.push(result);
         return result;
     }
 
@@ -414,7 +423,7 @@ export class ExternalReconciliationStore {
     }
 
     getSummary(): ExternalReconciliationSummary {
-        return this.results.reduce<ExternalReconciliationSummary>((acc, result) => {
+        const summary = this.results.reduce<ExternalReconciliationSummary>((acc, result) => {
             acc.reconciliationRuns += 1;
             acc.matchedOrderCount += result.matchedOrderCount;
             acc.mismatchedOrderCount += result.mismatchedOrderCount;
@@ -427,6 +436,7 @@ export class ExternalReconciliationStore {
             acc.lastSnapshotSourceLabel = result.snapshotSourceLabel;
             if (result.snapshotTrustworthy) acc.trustworthySnapshotCount += 1;
             else acc.untrustworthySnapshotCount += 1;
+            acc.snapshotsIngestedByProvenance[result.snapshotProvenance] = (acc.snapshotsIngestedByProvenance[result.snapshotProvenance] ?? 0) + 1;
             for (const [issueType, count] of Object.entries(result.issueCountsByType)) {
                 acc.issueCountsByType[issueType] = (acc.issueCountsByType[issueType] ?? 0) + count;
             }
@@ -445,6 +455,29 @@ export class ExternalReconciliationStore {
             lastSnapshotSourceLabel: null,
             trustworthySnapshotCount: 0,
             untrustworthySnapshotCount: 0,
+            snapshotsIngestedByProvenance: {},
+            snapshotsMissingExternalIdentifiers: 0,
+            malformedSnapshotRejectCount: 0,
+            staleSnapshotInputCount: 0,
+            normalizationWarningCounts: {},
         });
+        for (const normalization of this.normalizationResults) {
+            if (!normalization.accepted) {
+                summary.malformedSnapshotRejectCount += 1;
+                continue;
+            }
+            const snapshot = normalization.snapshot;
+            if (!snapshot) continue;
+            const missingIds = snapshot.orders.filter((order) => !order.externalOrderId && !order.externalExecutionId && !order.venueOrderRef).length
+                + snapshot.fills.filter((fill) => !fill.externalOrderId && !fill.externalExecutionId && !fill.externalFillId && !fill.venueOrderRef).length;
+            if (missingIds > 0) summary.snapshotsMissingExternalIdentifiers += 1;
+            for (const warning of normalization.warnings) {
+                summary.normalizationWarningCounts[warning.warningType] = (summary.normalizationWarningCounts[warning.warningType] ?? 0) + 1;
+                if (warning.warningType === "stale_snapshot_input") {
+                    summary.staleSnapshotInputCount += 1;
+                }
+            }
+        }
+        return summary;
     }
 }

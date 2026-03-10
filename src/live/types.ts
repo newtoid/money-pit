@@ -207,6 +207,8 @@ export type ExternalOrderStatus =
 export type ExternalOrderSnapshot = {
     internalOrderId: string | null;
     externalOrderId: string | null;
+    externalExecutionId: string | null;
+    venueOrderRef: string | null;
     executionAttemptId: string | null;
     correlationId: string | null;
     legId: string | null;
@@ -221,6 +223,9 @@ export type ExternalOrderSnapshot = {
 export type ExternalFillSnapshot = {
     internalOrderId: string | null;
     externalOrderId: string | null;
+    externalExecutionId: string | null;
+    externalFillId: string | null;
+    venueOrderRef: string | null;
     executionAttemptId: string | null;
     legId: string | null;
     filledSize: number;
@@ -229,7 +234,13 @@ export type ExternalFillSnapshot = {
     rawSourceMetadata: Record<string, unknown> | null;
 };
 
+export type ExternalSnapshotProvenance =
+    | "synthetic_test_snapshot"
+    | "replay_generated_snapshot"
+    | "future_external_api_shape";
+
 export type ExternalExecutionSnapshot = {
+    provenance: ExternalSnapshotProvenance;
     sourceLabel: string;
     capturedAtMs: number;
     maxSnapshotAgeMs: number | null;
@@ -284,6 +295,7 @@ export type ReconciliationResult = {
     adapterMode: ExecutionMode;
     comparisonMode: ReconciliationInput["comparisonMode"];
     capturedAtMs: number;
+    snapshotProvenance: ExternalSnapshotProvenance;
     snapshotSourceLabel: string;
     snapshotTrustworthy: boolean;
     issueCountsByType: Record<ReconciliationIssueType, number>;
@@ -296,6 +308,80 @@ export type ReconciliationResult = {
     unresolvedReconciliationCount: number;
     diffs: ReconciliationDiff[];
     issues: ReconciliationIssue[];
+};
+
+export type ExternalSnapshotOrderIngestion = {
+    internalOrderId?: string | null;
+    externalOrderId?: string | null;
+    externalExecutionId?: string | null;
+    venueOrderRef?: string | null;
+    executionAttemptId?: string | null;
+    correlationId?: string | null;
+    legId?: string | null;
+    tokenId?: string | null;
+    status?: string | null;
+    filledSize?: number | string | null;
+    averageFillPrice?: number | string | null;
+    observedAtMs?: number | string | null;
+    rawSourceMetadata?: Record<string, unknown> | null;
+};
+
+export type ExternalSnapshotFillIngestion = {
+    internalOrderId?: string | null;
+    externalOrderId?: string | null;
+    externalExecutionId?: string | null;
+    externalFillId?: string | null;
+    venueOrderRef?: string | null;
+    executionAttemptId?: string | null;
+    legId?: string | null;
+    filledSize?: number | string | null;
+    averageFillPrice?: number | string | null;
+    observedAtMs?: number | string | null;
+    rawSourceMetadata?: Record<string, unknown> | null;
+};
+
+export type ExternalSnapshotExecutionIngestion = {
+    provenance: ExternalSnapshotProvenance;
+    sourceLabel: string;
+    capturedAtMs?: number | string | null;
+    ingestedAtMs?: number | string | null;
+    maxSnapshotAgeMs?: number | string | null;
+    trustworthy?: boolean | null;
+    orders?: ExternalSnapshotOrderIngestion[] | null;
+    fills?: ExternalSnapshotFillIngestion[] | null;
+    rawSourceMetadata?: Record<string, unknown> | null;
+};
+
+export type SnapshotNormalizationWarningType =
+    | "missing_external_identifiers"
+    | "missing_internal_match_keys"
+    | "unknown_status_value"
+    | "invalid_numeric_field"
+    | "missing_timestamp"
+    | "stale_snapshot_input";
+
+export type SnapshotNormalizationWarning = {
+    warningType: SnapshotNormalizationWarningType;
+    scope: "snapshot" | "order" | "fill";
+    message: string;
+    details: Record<string, number | string | boolean | null>;
+};
+
+export type SnapshotIngestionRejectReason =
+    | "missing_source_label"
+    | "invalid_captured_at"
+    | "missing_snapshot_payload";
+
+export type SnapshotNormalizationResult = {
+    accepted: boolean;
+    rejectReason: SnapshotIngestionRejectReason | null;
+    snapshot: ExternalExecutionSnapshot | null;
+    warnings: SnapshotNormalizationWarning[];
+};
+
+export type SnapshotIngestionResult = {
+    normalization: SnapshotNormalizationResult;
+    reconciliation: ReconciliationResult | null;
 };
 
 export type ExternalReconciliationSummary = {
@@ -312,6 +398,11 @@ export type ExternalReconciliationSummary = {
     lastSnapshotSourceLabel: string | null;
     trustworthySnapshotCount: number;
     untrustworthySnapshotCount: number;
+    snapshotsIngestedByProvenance: Record<string, number>;
+    snapshotsMissingExternalIdentifiers: number;
+    malformedSnapshotRejectCount: number;
+    staleSnapshotInputCount: number;
+    normalizationWarningCounts: Record<string, number>;
 };
 
 export type ReconciliationSnapshot = {
