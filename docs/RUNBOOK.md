@@ -53,6 +53,55 @@ List recording files:
 tsx scripts/doctor.ts
 ```
 
+## Read-Only Venue Probe
+
+Run the authenticated read-only venue probe:
+
+```bash
+npm run venue:readonly
+```
+
+Required safety env vars:
+
+- `LIVE_EXECUTION_ENABLED=false`
+- `EXECUTION_KILL_SWITCH=true`
+
+Read-only venue env vars:
+
+- `READ_ONLY_VENUE_ENABLED=true`
+- `READ_ONLY_VENUE_PRIVATE_KEY` or `PRIVATE_KEY`
+- `READ_ONLY_VENUE_API_KEY` or `POLYMARKET_CLOB_API_KEY`
+- `READ_ONLY_VENUE_API_SECRET` or `POLYMARKET_CLOB_SECRET`
+- `READ_ONLY_VENUE_API_PASSPHRASE` or `POLYMARKET_CLOB_PASSPHRASE`
+
+Optional read-only venue env vars:
+
+- `READ_ONLY_VENUE_HOST`
+- `READ_ONLY_VENUE_CHAIN_ID`
+- `READ_ONLY_VENUE_LOG_LABEL`
+- `READ_ONLY_VENUE_FETCH_OPEN_ORDERS`
+- `READ_ONLY_VENUE_FETCH_TRADES`
+- `READ_ONLY_VENUE_FETCH_ACCOUNT_BALANCES`
+- `READ_ONLY_VENUE_OPEN_ORDERS_MARKET`
+- `READ_ONLY_VENUE_OPEN_ORDERS_ASSET_ID`
+- `READ_ONLY_VENUE_TRADES_MARKET`
+- `READ_ONLY_VENUE_TRADES_ASSET_ID`
+- `READ_ONLY_VENUE_BALANCE_TOKEN_IDS`
+
+Current real-source provenance values:
+
+- `real_readonly_clob_open_orders_trades_api`
+- `real_readonly_clob_balance_allowance_api`
+
+Important:
+
+- this path is authenticated but read-only
+- it must not be used to place or cancel orders
+- fetched snapshots pass through the existing normalization layers only
+- fetched data does not mutate internal accounting or portfolio state
+- current balance/allowance reads do not provide authoritative reserved or total balances
+- missing reserved/total fields are surfaced as warnings instead of being invented
+
 ## Important Operational Notes
 
 - Replay assumes deterministic strategy evaluation over recorded data.
@@ -258,6 +307,14 @@ tsx scripts/doctor.ts
   - snapshots missing external identifiers
   - malformed snapshot reject counts
   - normalization warning counts
+- Read-only venue probe reporting currently includes:
+  - successful fetch counts by endpoint
+  - failed fetch counts by endpoint
+  - normalization accepted/reject counts
+  - normalization warning counts
+  - provenance/source counts
+  - stale-input warning counts
+  - partial real-data warning counts
   - internal identifier coverage:
     - orders with external order ids
     - orders with external execution ids

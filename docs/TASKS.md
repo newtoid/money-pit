@@ -116,10 +116,15 @@
   - normalization into balance reconciliation snapshot types
   - adapter hook for raw account snapshot ingestion
   - normalization warning/reject reporting by provenance and warning type
+- [x] Add authenticated read-only venue integration scaffolding:
+  - dedicated read-only venue layer for authenticated fetches only
+  - strict safety gates that keep execution disabled and kill switch enabled
+  - normalization of fetched order/trade/account data through existing ingestion layers
+  - reporting for fetch success/failure, normalization outcomes, provenance, and partial/stale real-data warnings
 
 ## Next Phase
 
-- [ ] Add richer synthetic account snapshot reconciliation scenarios that exercise reserved-balance semantics more explicitly, still without authenticated venue access.
+- [ ] Add read-only fetched-data reconciliation probes that run real venue snapshots through the existing reconciliation/accounting summaries without mutating internal state.
 
 ## Later
 
