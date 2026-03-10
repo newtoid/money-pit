@@ -201,6 +201,54 @@ tsx scripts/doctor.ts
   - no exchange order ids or authenticated order queries exist yet
   - no retry logic exists yet
 
+## External Reconciliation Model
+
+- External reconciliation models live under `src/live/`.
+- This model is separate from:
+  - execution attempts
+  - order lifecycle storage
+  - replay fill simulation
+  - portfolio accounting
+- Current external reconciliation concepts include:
+  - `ExternalOrderSnapshot`
+  - `ExternalFillSnapshot`
+  - `ExternalExecutionSnapshot`
+  - `ReconciliationInput`
+  - `ReconciliationDiff`
+  - `ReconciliationIssue`
+  - `ReconciliationResult`
+- Stable reconciliation issue types currently include:
+  - `status_mismatch`
+  - `fill_quantity_mismatch`
+  - `fill_price_mismatch`
+  - `missing_external_order`
+  - `unexpected_external_order`
+  - `missing_external_order_id`
+  - `stale_external_snapshot`
+  - `unresolved_reconciliation_state`
+- Current adapter behavior:
+  - `dry_run_stub`
+    - accepts reconciliation input
+    - records a noop reconciliation result only
+  - `replay_simulated`
+    - accepts synthetic external snapshots
+    - compares them against internal order lifecycle records and fill events
+  - `future_live_clob`
+    - remains noop/deny-only
+- Reconciliation reporting currently includes:
+  - issue counts by type
+  - matched vs mismatched orders
+  - missing external orders
+  - unexpected external orders
+  - missing external order ids
+  - stale snapshot warnings
+  - unresolved reconciliation counts
+- Important:
+  - this is still fully non-live
+  - no authenticated exchange snapshot source exists
+  - no external order ids are sourced from a venue
+  - reconciliation output is a structured comparison result, not venue truth
+
 ## Execution Attempt Lifecycle
 
 - Replay and paper both emit execution-attempt records.

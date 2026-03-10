@@ -79,12 +79,16 @@
   - order lifecycle store with status history and timestamps
   - dry-run / replay-simulated / deny-only adapter wiring
   - order lifecycle summaries for terminal states, transition reasons, and reconciliation-pending counts
+- [x] Add external reconciliation scaffolding behind the adapter boundary:
+  - explicit external snapshot / reconciliation result types
+  - noop reconciliation path for non-live stub adapters
+  - synthetic external snapshot comparison path for replay/test adapters
+  - reconciliation issue summaries for mismatches, missing orders, and stale snapshots
 
 ## Next Phase
 
-- [ ] Add exchange reconciliation scaffolding on top of the non-live order lifecycle boundary.
+- [ ] Add exchange-side identifier and venue snapshot ingestion scaffolding on top of the non-live reconciliation model.
 
 ## Later
 
-- [ ] Add reconciliation hooks.
 - [ ] Add compact summary metrics and alarms.

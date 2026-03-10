@@ -278,3 +278,20 @@ Consequence:
 - dry-run and replay-simulated adapters both populate order lifecycle records without placing orders
 - replay remains the fill authority; the replay-simulated adapter only mirrors replay outcomes into order lifecycle records
 - order lifecycle summaries now report terminal-state counts, transition-reason counts, submit-denied counts, reconciliation-pending counts, and average order lifetime
+
+### Keep external reconciliation separate from order lifecycle and adapter submission logic
+
+Reason:
+
+- future venue/account reconciliation is a comparison problem, not an order-state mutation problem
+- the system needs a clean place to represent external-style snapshots before any authenticated venue access exists
+- dry-run and replay should be able to exercise reconciliation reporting without implying venue truth
+
+Consequence:
+
+- external reconciliation models now live under `src/live/`
+- reconciliation compares internal order records against explicit external-style snapshot inputs
+- supported mismatch categories are machine-readable and include status, fill quantity, fill price, missing external orders, unexpected external orders, stale snapshots, and unresolved reconciliation state
+- stub adapters expose a noop reconciliation path
+- replay-simulated adapters can consume synthetic external snapshots for tests and reporting
+- no real exchange polling, authentication, or venue-side truth source exists yet
