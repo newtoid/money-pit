@@ -114,6 +114,7 @@ Optional probe env vars:
 
 - `REAL_DATA_RECONCILIATION_ENABLED`
 - `REAL_DATA_RECONCILIATION_OUTPUT_PATH`
+- `REAL_DATA_INTERNAL_BASELINE_PATH`
 - `REAL_DATA_INTERNAL_ORDER_SNAPSHOT_PATH`
 - `REAL_DATA_INTERNAL_ACCOUNT_SNAPSHOT_PATH`
 
@@ -133,6 +134,49 @@ Important:
 - if no internal account baseline is provided, external balances will only surface as unexpected or uncovered
 - this probe does not mutate internal accounting or portfolio state
 - this probe does not enable any trading capability
+
+Example with explicit baseline files:
+
+```bash
+npm run venue:reconcile -- --order-baseline data/baselines/internal-baseline.orders.json --account-baseline data/baselines/internal-baseline.account.json
+```
+
+Example with a combined baseline file:
+
+```bash
+npm run venue:reconcile -- --baseline data/baselines/internal-baseline.json
+```
+
+## Internal Baseline Export
+
+Export internal baseline scaffolding:
+
+```bash
+npm run baseline:export
+```
+
+Current default outputs:
+
+- `data/baselines/internal-baseline.json`
+- `data/baselines/internal-baseline.orders.json`
+- `data/baselines/internal-baseline.account.json`
+
+Optional flags:
+
+- `--baseline <combined-input>`
+- `--order-input <orders-input>`
+- `--account-input <account-input>`
+- `--output <combined-output>`
+- `--order-output <orders-output>`
+- `--account-output <account-output>`
+- `--source-label <label>`
+
+Important:
+
+- current exporter is scaffolding, not a live runtime-state capture hook
+- with no input baselines, it writes an explicit empty baseline and reports missing sections
+- it never fabricates internal identifiers or balances
+- it does not mutate strategy, portfolio, or execution state
 
 ## Important Operational Notes
 
@@ -356,6 +400,12 @@ Important:
   - comparison coverage counts
   - provenance/source counts
   - explicit limitation counts for missing baselines and partial real-data coverage
+- Internal baseline export reporting currently includes:
+  - exported record counts by type
+  - baseline provenance
+  - capture timestamp
+  - missing baseline sections
+  - output paths written
   - internal identifier coverage:
     - orders with external order ids
     - orders with external execution ids

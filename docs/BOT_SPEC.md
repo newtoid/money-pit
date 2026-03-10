@@ -67,6 +67,7 @@ This repo currently implements:
 - explicit raw external account snapshot ingestion / normalization scaffolding behind balance reconciliation
 - explicit authenticated read-only venue integration scaffolding that fetches real venue data into existing normalization layers without enabling trading
 - explicit real-data reconciliation probe/orchestration that runs authenticated read-only snapshots through existing normalization and reconciliation layers on demand
+- explicit internal baseline export/capture scaffolding so reconciliation probes can consume repeatable internal baseline files without inventing internal truth
 
 Not yet implemented in this phase:
 
@@ -207,6 +208,20 @@ Not yet implemented in this phase:
   - it can emit a structured JSON result to disk
   - it does not mutate internal accounting or portfolio state
   - it does not enable any submit/cancel capability
+- Internal baseline export/capture is now scaffolded and remains strictly non-trading:
+  - it lives in a separate internal-baseline layer
+  - it exports explicit combined and split JSON baseline files for orders, fills, and account state
+  - current baseline provenance values are:
+    - `manual_internal_baseline_export`
+    - `empty_internal_baseline_export`
+    - `future_runtime_internal_baseline_capture`
+  - if no internal source inputs are provided, the exporter writes an explicit empty baseline and reports missing sections
+  - the real-data reconciliation probe can now consume:
+    - `--baseline <combined-file>`
+    - `--order-baseline <orders-file>`
+    - `--account-baseline <account-file>`
+  - no internal identifiers are fabricated
+  - exporting a baseline does not mutate internal portfolio/accounting state
 - Synthetic reconciliation fixture coverage is now richer:
   - full external-id matches
   - partial-id matches and partial-id insufficiency
