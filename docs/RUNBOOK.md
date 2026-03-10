@@ -258,6 +258,51 @@ Required safe posture for any real pilot attempt:
 - requested market is in `LIVE_ORDER_PILOT_ALLOWLIST_MARKETS`
 - requested asset is in `LIVE_ORDER_PILOT_ALLOWLIST_ASSETS`
 - requested size is less than or equal to `LIVE_ORDER_PILOT_MAX_ORDER_SIZE`
+
+Pilot outputs include:
+
+- structured pilot result JSON
+- internal order baseline JSON for follow-up reconciliation
+
+## One-Shot Post-Submit Verification
+
+Run one-shot read-only verification against a pilot result:
+
+```bash
+npm run live:verify-once -- --pilot-result <pilot-result.json>
+```
+
+Optional flags:
+
+- `--order-baseline <orders.json>`
+- `--account-baseline <account.json>`
+- `--output <verification-output.json>`
+
+Behavior:
+
+- confirms read-only mode explicitly
+- confirms `LIVE_EXECUTION_ENABLED=false` is required for the read-only fetch path
+- confirms `EXECUTION_KILL_SWITCH=true` is required for the read-only fetch path
+- loads the pilot result and optional baseline files
+- performs a single read-only fetch for relevant orders, trades, and account/balance data
+- reuses existing normalization and reconciliation layers
+- prints a structured JSON verification result to stdout
+- optionally writes the same result to `--output`
+
+Reports include:
+
+- whether the pilot external order id was found
+- how many matching order and trade snapshots were visible
+- whether the pilot baseline matched visible venue snapshots
+- whether account/balance coverage was only partial
+- explicit fetch, normalization, and reconciliation limitation counts
+
+Important:
+
+- this helper is manual and one-shot only
+- it does not poll, retry, cancel, or submit orders
+- it does not mutate portfolio or accounting state
+- partial or missing venue visibility is expected and reported explicitly
 - configured pilot max size is less than or equal to the hard-coded absolute pilot cap
 - `--confirm` matches `LIVE_ORDER_PILOT_CONFIRMATION_VALUE`
 

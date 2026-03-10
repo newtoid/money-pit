@@ -71,11 +71,11 @@ This repo currently implements:
 - explicit runtime-state baseline capture hooks so baseline export can populate order/fill baselines from existing internal runtime state where that state already exists
 - explicit live-order submission scaffolding with deny-by-default guards and a safe probe path
 - explicit one-shot live order submission pilot path for a single manual microscopic order under extreme safeguards
+- explicit one-shot post-submit read-only verification helpers for live pilot results using existing fetch, normalization, and reconciliation layers
 
 Not yet implemented in this phase:
 
 - live trading
-- real order submission
 - authenticated exchange reconciliation
 - metrics pipeline
 - real order submission
@@ -183,6 +183,18 @@ Not yet implemented in this phase:
     - `submitted_unknown`
     - `failed`
   - it does not retry, resubmit, cancel, or mutate portfolio/accounting state
+- One-shot post-submit verification is now explicit and manual:
+  - it lives in a dedicated helper layer and script, separate from strategy and submission
+  - it accepts a pilot result file plus optional order/account baseline files
+  - it performs one-shot read-only fetches for open orders, trades, and account/balance data
+  - it reuses the existing normalization, reconciliation, accounting-comparison, and balance-comparison layers
+  - it reports:
+    - whether the pilot external order id was visible
+    - whether matching order or trade snapshots were visible
+    - whether the pilot baseline matched any visible venue snapshots
+    - whether account visibility was only partial
+    - explicit fetch/normalization/reconciliation limitations
+  - it does not poll, retry, cancel, or mutate portfolio/accounting state
 - Order lifecycle scaffolding is now explicit and separate from execution attempts:
   - execution attempts model the strategy-level arb attempt lifecycle
   - order lifecycle records model per-leg order objects that would sit behind the adapter boundary
