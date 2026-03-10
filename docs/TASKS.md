@@ -106,10 +106,15 @@
   - explicit internal identifier provenance labels
   - richer synthetic fixture scenarios for matching and accounting disagreement
   - identifier coverage reporting for reconciliation comparisons
+- [x] Add external account / balance reconciliation scaffolding:
+  - explicit internal and external account snapshot types
+  - read-only balance comparison layer
+  - machine-readable balance issue types
+  - synthetic account/balance fixtures and adapter summary wiring
 
 ## Next Phase
 
-- [ ] Add non-live venue account / balance reconciliation scaffolding on top of the current order-level reconciliation layer.
+- [ ] Add raw external account snapshot ingestion / normalization scaffolding on top of the current non-live balance reconciliation layer.
 
 ## Later
 

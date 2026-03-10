@@ -265,6 +265,12 @@ tsx scripts/doctor.ts
     - orders with external fill ids
     - orders without external identifiers
   - internal identifier provenance counts
+  - separate account/balance reconciliation summary:
+    - balance issue counts by type
+    - compared vs skipped assets
+    - matched vs mismatched asset balances
+    - stale account snapshot warnings
+    - provenance/source counts
 
 ## Internal External-Identifier Scaffolding
 
@@ -283,6 +289,39 @@ tsx scripts/doctor.ts
   - normal runtime does not fabricate these ids
   - synthetic fixture/test paths may attach them explicitly
   - reconciliation reporting now exposes how much internal state has identifier coverage vs none
+
+## External Account / Balance Reconciliation
+
+- Account/balance reconciliation lives separately from order-level reconciliation.
+- It currently compares:
+  - internal account snapshots
+  - external-style account snapshots
+- Current compared fields are:
+  - `available_balance`
+  - `reserved_balance`
+  - `total_balance`
+- Stable machine-readable balance issue types currently include:
+  - `external_internal_available_balance_mismatch`
+  - `external_internal_reserved_balance_mismatch`
+  - `external_internal_total_balance_mismatch`
+  - `missing_external_asset_balance`
+  - `unexpected_external_asset_balance`
+  - `stale_external_account_snapshot`
+  - `insufficient_balance_comparison_coverage`
+- Current adapter behavior:
+  - `dry_run_stub`
+    - records noop balance reconciliation results only
+  - `replay_simulated`
+    - accepts explicit synthetic internal/external account snapshots
+    - records read-only balance comparison results
+  - `future_live_clob`
+    - remains noop/deny-only
+- Important:
+  - this does not mutate internal portfolio/accounting state
+  - no authenticated account polling exists
+  - no venue-truth account view exists
+  - missing balance values are not invented
+  - missing coverage is reported explicitly rather than guessed through
 
 ## Synthetic Reconciliation Fixtures
 
