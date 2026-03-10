@@ -1,159 +1,150 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { matchExternalSnapshots } from "../src/live/reconciliationMatching";
-import { InternalOrderReconciliationSnapshot } from "../src/live/types";
+import { buildExternalFill, buildExternalOrder, buildInternalSnapshots } from "./helpers/reconciliationFixtures";
 
-function sampleInternalOrders(): InternalOrderReconciliationSnapshot[] {
-    return [
-        {
-            orderId: "order-1",
-            executionAttemptId: "attempt-1",
-            correlationId: "corr-1",
-            legId: "leg-yes",
-            tokenId: "yes-1",
-            binarySide: "yes",
-            currentState: "reconciled",
-            terminalState: "reconciled",
-            comparableStatus: "open",
-            createdAtMs: 1000,
-            updatedAtMs: 1100,
-            filledSize: 1,
-            averageFillPrice: 0.4,
-            fillEventCount: 1,
-            filledNotional: 0.4,
-            partialFillObserved: false,
-            statusProgressionRank: 2,
-            knownExternalOrderId: "ext-order-1",
-            knownExternalExecutionId: "ext-exec-1",
-            knownExternalFillIds: ["ext-fill-1"],
-            knownVenueOrderRef: "venue-1",
-        },
-        {
-            orderId: "order-2",
-            executionAttemptId: "attempt-2",
-            correlationId: "corr-2",
-            legId: "leg-no",
-            tokenId: "no-1",
-            binarySide: "no",
-            currentState: "reconciled",
-            terminalState: "reconciled",
-            comparableStatus: "open",
-            createdAtMs: 1000,
-            updatedAtMs: 1100,
-            filledSize: 1,
-            averageFillPrice: 0.4,
-            fillEventCount: 1,
-            filledNotional: 0.4,
-            partialFillObserved: false,
-            statusProgressionRank: 2,
-            knownExternalOrderId: null,
-            knownExternalExecutionId: null,
-            knownExternalFillIds: [],
-            knownVenueOrderRef: null,
-        },
-    ];
-}
-
-test("matching rules prefer direct external id matches over fallback keys", () => {
-    const result = matchExternalSnapshots({
-        internalOrders: sampleInternalOrders(),
-        externalOrders: [{
-            internalOrderId: null,
-            externalOrderId: "ext-order-1",
-            externalExecutionId: "ext-exec-1",
-            venueOrderRef: "venue-1",
-            executionAttemptId: "attempt-2",
-            correlationId: "corr-2",
-            legId: "leg-no",
-            tokenId: "no-1",
-            status: "open",
-            filledSize: 1,
-            averageFillPrice: 0.4,
-            externalFillCount: 1,
-            totalFilledNotional: 0.4,
-            partialFillObserved: false,
-            observedAtMs: 1200,
-            rawSourceMetadata: null,
-        }],
-        externalFills: [],
-    });
-    assert.equal(result.orderOutcomes[0]?.matchedInternalOrderId, null);
-    assert.equal(result.orderOutcomes[0]?.matchRule, null);
-    assert.equal(result.orderOutcomes[0]?.issueTypes.includes("conflicting_identifier_data"), true);
-});
-
-test("matching rules detect ambiguous and duplicate candidates without guessing", () => {
-    const internalOrders = sampleInternalOrders().concat({
-        ...sampleInternalOrders()[1],
-        orderId: "order-3",
+test("matching rules prefer direct external order id matches over fallback keys", () => {
+    const internalOrders = buildInternalSnapshots({
+        externalIdentifierMode: "synthetic_full",
     });
     const result = matchExternalSnapshots({
         internalOrders,
         externalOrders: [
-            {
-                internalOrderId: null,
-                externalOrderId: null,
-                externalExecutionId: null,
-                venueOrderRef: null,
-                executionAttemptId: "attempt-2",
-                correlationId: null,
-                legId: "leg-no",
+            buildExternalOrder({
+                externalOrderId: "ext-order-yes",
+                externalExecutionId: "ext-exec-yes",
+                venueOrderRef: "venue-ref-yes",
+                executionAttemptId: "attempt-1",
+                correlationId: "attempt-1",
+                legId: "attempt-1-no",
                 tokenId: "no-1",
-                status: "open",
-                filledSize: 1,
-                averageFillPrice: 0.4,
-                externalFillCount: 1,
-                totalFilledNotional: 0.4,
-                partialFillObserved: false,
-                observedAtMs: 1200,
-                rawSourceMetadata: null,
-            },
-            {
-                internalOrderId: null,
-                externalOrderId: null,
-                externalExecutionId: null,
-                venueOrderRef: null,
-                executionAttemptId: "attempt-2",
-                correlationId: null,
-                legId: "leg-no",
-                tokenId: "no-1",
-                status: "open",
-                filledSize: 1,
-                averageFillPrice: 0.4,
-                externalFillCount: 1,
-                totalFilledNotional: 0.4,
-                partialFillObserved: false,
-                observedAtMs: 1201,
-                rawSourceMetadata: null,
-            },
+            }),
         ],
         externalFills: [],
     });
     assert.equal(result.orderOutcomes[0]?.matchedInternalOrderId, null);
+    assert.equal(result.orderOutcomes[0]?.matchRule, null);
+    assert.ok(result.orderOutcomes[0]?.issueTypes.includes("conflicting_identifier_data"));
+});
+
+test("matching rules use external execution id and fill id before fallback identifiers", () => {
+    const internalOrders = buildInternalSnapshots({
+        externalIdentifierMode: "synthetic_full",
+        fillCountPerLeg: 2,
+    });
+    const executionMatch = matchExternalSnapshots({
+        internalOrders,
+        externalOrders: [
+            buildExternalOrder({
+                externalOrderId: null,
+                externalExecutionId: "ext-exec-yes",
+                executionAttemptId: "attempt-1",
+                legId: "attempt-1-yes",
+            }),
+        ],
+        externalFills: [],
+    });
+    assert.equal(executionMatch.orderOutcomes[0]?.matchedInternalOrderId, "attempt-1-order-1");
+    assert.equal(executionMatch.orderOutcomes[0]?.matchRule, "matched_by_external_execution_id");
+
+    const fillMatch = matchExternalSnapshots({
+        internalOrders,
+        externalOrders: [],
+        externalFills: [
+            buildExternalFill({
+                externalFillId: "ext-fill-no-2",
+                externalOrderId: null,
+                externalExecutionId: null,
+            }),
+        ],
+    });
+    assert.equal(fillMatch.fillOutcomes[0]?.matchedInternalOrderId, "attempt-1-order-2");
+    assert.equal(fillMatch.fillOutcomes[0]?.matchRule, "matched_by_external_fill_id");
+});
+
+test("matching rules report ambiguous and duplicate identifier cases without guessing", () => {
+    const attemptTwoOrders = buildInternalSnapshots({
+        executionAttemptId: "attempt-2",
+        externalIdentifierMode: "synthetic_partial",
+    });
+    const internalOrders = buildInternalSnapshots({
+        externalIdentifierMode: "synthetic_partial",
+    }).concat(attemptTwoOrders, {
+        ...attemptTwoOrders[1]!,
+        orderId: "attempt-2-order-2-duplicate",
+        executionAttemptId: "attempt-2",
+        correlationId: "attempt-2",
+        legId: "attempt-2-no",
+        knownExternalOrderId: null,
+        knownExternalExecutionId: null,
+        knownExternalFillIds: [],
+        knownVenueOrderRef: null,
+        externalIdentifierProvenance: "none",
+    });
+    const result = matchExternalSnapshots({
+        internalOrders,
+        externalOrders: [
+            buildExternalOrder({
+                externalOrderId: null,
+                externalExecutionId: null,
+                executionAttemptId: "attempt-2",
+                correlationId: null,
+                legId: "attempt-2-no",
+            }),
+            buildExternalOrder({
+                externalOrderId: null,
+                externalExecutionId: null,
+                executionAttemptId: "attempt-2",
+                correlationId: null,
+                legId: "attempt-2-no",
+                observedAtMs: 1201,
+            }),
+        ],
+        externalFills: [],
+    });
     assert.ok(result.orderOutcomes[0]?.issueTypes.includes("duplicate_internal_candidates"));
     assert.ok(result.orderOutcomes[0]?.issueTypes.includes("unmatched_ambiguous_candidates"));
     assert.ok(result.orderOutcomes[0]?.issueTypes.includes("duplicate_external_snapshot"));
     assert.ok(result.orderOutcomes[1]?.issueTypes.includes("duplicate_external_snapshot"));
 });
 
-test("matching rules use external fill ids when available", () => {
-    const result = matchExternalSnapshots({
-        internalOrders: sampleInternalOrders(),
-        externalOrders: [],
-        externalFills: [{
-            internalOrderId: null,
-            externalOrderId: null,
-            externalExecutionId: null,
-            externalFillId: "ext-fill-1",
-            venueOrderRef: null,
-            executionAttemptId: null,
-            legId: null,
-            filledSize: 1,
-            averageFillPrice: 0.4,
-            observedAtMs: 1200,
-            rawSourceMetadata: null,
-        }],
+test("matching rules report conflicting identifier data without guessing", () => {
+    const internalOrders = buildInternalSnapshots({
+        externalIdentifierMode: "synthetic_partial",
     });
-    assert.equal(result.fillOutcomes[0]?.matchedInternalOrderId, "order-1");
-    assert.equal(result.fillOutcomes[0]?.matchRule, "matched_by_external_fill_id");
+    const result = matchExternalSnapshots({
+        internalOrders,
+        externalOrders: [
+            buildExternalOrder({
+                externalOrderId: "ext-order-yes",
+                externalExecutionId: "different-exec-id",
+                executionAttemptId: "attempt-1",
+                correlationId: "attempt-1",
+                legId: "attempt-1-no",
+            }),
+        ],
+        externalFills: [],
+    });
+    assert.ok(result.orderOutcomes[0]?.issueTypes.includes("conflicting_identifier_data"));
+});
+
+test("matching rules keep partial identifiers unmatched when coverage is insufficient", () => {
+    const internalOrders = buildInternalSnapshots({
+        externalIdentifierMode: "none",
+    });
+    const result = matchExternalSnapshots({
+        internalOrders,
+        externalOrders: [
+            buildExternalOrder({
+                externalOrderId: "ext-order-unknown",
+                externalExecutionId: null,
+                executionAttemptId: null,
+                correlationId: null,
+                legId: null,
+            }),
+        ],
+        externalFills: [],
+    });
+    assert.equal(result.orderOutcomes[0]?.matchedInternalOrderId, null);
+    assert.ok(result.orderOutcomes[0]?.issueTypes.includes("partial_identifier_insufficient"));
 });

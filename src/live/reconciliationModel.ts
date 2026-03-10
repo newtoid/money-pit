@@ -36,6 +36,9 @@ function roundIfFinite(value: number | null): number | null {
 
 function sumFillEvents(fillEvents: FillEvent[]) {
     const totalFilled = fillEvents.reduce((sum, item) => sum + item.filledSize, 0);
+    const knownExternalFillIds = fillEvents
+        .map((item) => item.externalIdentifiers.externalFillId)
+        .filter((item): item is string => Boolean(item));
     if (totalFilled <= EPSILON) {
         return {
             filledSize: 0,
@@ -43,6 +46,7 @@ function sumFillEvents(fillEvents: FillEvent[]) {
             fillEventCount: 0,
             filledNotional: null,
             partialFillObserved: false,
+            knownExternalFillIds,
         };
     }
     const weighted = fillEvents.reduce((sum, item) => sum + (item.filledSize * item.averageFillPrice), 0);
@@ -52,6 +56,7 @@ function sumFillEvents(fillEvents: FillEvent[]) {
         fillEventCount: fillEvents.length,
         filledNotional: weighted,
         partialFillObserved: fillEvents.length > 1,
+        knownExternalFillIds,
     };
 }
 
@@ -132,10 +137,11 @@ export function buildInternalReconciliationSnapshots(args: {
             filledNotional: fillSummary.filledNotional,
             partialFillObserved: fillSummary.partialFillObserved,
             statusProgressionRank: statusProgressionRank(comparableStatusFromLifecycleState(order.currentState)),
-            knownExternalOrderId: null,
-            knownExternalExecutionId: null,
-            knownExternalFillIds: [],
-            knownVenueOrderRef: null,
+            knownExternalOrderId: order.externalIdentifiers.externalOrderId,
+            knownExternalExecutionId: order.externalIdentifiers.externalExecutionId,
+            knownExternalFillIds: fillSummary.knownExternalFillIds,
+            knownVenueOrderRef: order.externalIdentifiers.venueOrderRef,
+            externalIdentifierProvenance: order.externalIdentifiers.provenance,
         };
     });
 }
@@ -178,6 +184,8 @@ export function runNoopReconciliation(args: {
         unresolvedReconciliationCount: 0,
         comparisonCoverageCounts: {},
         skippedAccountingFields: {},
+        internalIdentifierCoverage: {},
+        internalIdentifierProvenanceCounts: {},
         matchedOrdersWithAccountingAgreement: 0,
         matchedOrdersWithAccountingDisagreement: 0,
         matchingOutcomes: [],
@@ -229,6 +237,20 @@ export function runExternalReconciliation(args: {
     const accountingIssueCountsByType: Record<string, number> = {};
     const comparisonCoverageCounts: Record<string, number> = {};
     const skippedAccountingFields: Record<string, number> = {};
+    const internalIdentifierCoverage = args.internalOrders.reduce<Record<string, number>>((acc, item) => {
+        if (item.knownExternalOrderId) acc.orders_with_external_order_id = (acc.orders_with_external_order_id ?? 0) + 1;
+        if (item.knownExternalExecutionId) acc.orders_with_external_execution_id = (acc.orders_with_external_execution_id ?? 0) + 1;
+        if (item.knownVenueOrderRef) acc.orders_with_venue_order_ref = (acc.orders_with_venue_order_ref ?? 0) + 1;
+        if (item.knownExternalFillIds.length > 0) acc.orders_with_external_fill_ids = (acc.orders_with_external_fill_ids ?? 0) + 1;
+        if (!item.knownExternalOrderId && !item.knownExternalExecutionId && !item.knownVenueOrderRef && item.knownExternalFillIds.length === 0) {
+            acc.orders_without_external_identifiers = (acc.orders_without_external_identifiers ?? 0) + 1;
+        }
+        return acc;
+    }, {});
+    const internalIdentifierProvenanceCounts = args.internalOrders.reduce<Record<string, number>>((acc, item) => {
+        acc[item.externalIdentifierProvenance] = (acc[item.externalIdentifierProvenance] ?? 0) + 1;
+        return acc;
+    }, {});
     const accountingComparisons = [];
     let matchedOrdersWithAccountingAgreement = 0;
     let matchedOrdersWithAccountingDisagreement = 0;
@@ -491,6 +513,8 @@ export function runExternalReconciliation(args: {
         unresolvedReconciliationCount: issueCountsByType.unresolved_reconciliation_state,
         comparisonCoverageCounts,
         skippedAccountingFields,
+        internalIdentifierCoverage,
+        internalIdentifierProvenanceCounts,
         matchedOrdersWithAccountingAgreement,
         matchedOrdersWithAccountingDisagreement,
         matchingOutcomes: matching.allOutcomes,
@@ -556,6 +580,12 @@ export class ExternalReconciliationStore {
             for (const [field, count] of Object.entries(result.skippedAccountingFields)) {
                 acc.skippedAccountingFields[field] = (acc.skippedAccountingFields[field] ?? 0) + count;
             }
+            for (const [field, count] of Object.entries(result.internalIdentifierCoverage)) {
+                acc.internalIdentifierCoverage[field] = (acc.internalIdentifierCoverage[field] ?? 0) + count;
+            }
+            for (const [field, count] of Object.entries(result.internalIdentifierProvenanceCounts)) {
+                acc.internalIdentifierProvenanceCounts[field] = (acc.internalIdentifierProvenanceCounts[field] ?? 0) + count;
+            }
             return acc;
         }, {
             reconciliationRuns: 0,
@@ -575,6 +605,8 @@ export class ExternalReconciliationStore {
             unresolvedReconciliationCount: 0,
             comparisonCoverageCounts: {},
             skippedAccountingFields: {},
+            internalIdentifierCoverage: {},
+            internalIdentifierProvenanceCounts: {},
             matchedOrdersWithAccountingAgreement: 0,
             matchedOrdersWithAccountingDisagreement: 0,
             lastComparisonMode: null,

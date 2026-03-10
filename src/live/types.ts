@@ -18,6 +18,26 @@ export type ExecutionLegOrderRequest = {
     timeInForce: TimeInForce;
 };
 
+export type InternalExternalIdentifierProvenance =
+    | "none"
+    | "synthetic_fixture"
+    | "future_external_identifier_scaffold";
+
+export type OrderExternalIdentifiers = {
+    externalOrderId: string | null;
+    externalExecutionId: string | null;
+    venueOrderRef: string | null;
+    provenance: InternalExternalIdentifierProvenance;
+};
+
+export type FillEventExternalIdentifiers = {
+    externalOrderId: string | null;
+    externalExecutionId: string | null;
+    externalFillId: string | null;
+    venueOrderRef: string | null;
+    provenance: InternalExternalIdentifierProvenance;
+};
+
 export type ExecutionRequest = {
     executionAttemptId: string;
     correlationId: string;
@@ -84,6 +104,7 @@ export type OrderLifecycleRecord = {
     terminalState: OrderLifecycleState | null;
     createdAtMs: number;
     updatedAtMs: number;
+    externalIdentifiers: OrderExternalIdentifiers;
     history: OrderLifecycleTransition[];
 };
 
@@ -115,6 +136,7 @@ export type FillEvent = {
     filledSize: number;
     averageFillPrice: number;
     ts: number;
+    externalIdentifiers: FillEventExternalIdentifiers;
 };
 
 export type CancelResult = {
@@ -200,6 +222,7 @@ export type InternalOrderReconciliationSnapshot = {
     knownExternalExecutionId: string | null;
     knownExternalFillIds: string[];
     knownVenueOrderRef: string | null;
+    externalIdentifierProvenance: InternalExternalIdentifierProvenance;
 };
 
 export type ExternalOrderStatus =
@@ -372,6 +395,8 @@ export type ReconciliationResult = {
     unresolvedReconciliationCount: number;
     comparisonCoverageCounts: Record<string, number>;
     skippedAccountingFields: Record<string, number>;
+    internalIdentifierCoverage: Record<string, number>;
+    internalIdentifierProvenanceCounts: Record<string, number>;
     matchedOrdersWithAccountingAgreement: number;
     matchedOrdersWithAccountingDisagreement: number;
     matchingOutcomes: ReconciliationMatchingOutcome[];
@@ -475,6 +500,8 @@ export type ExternalReconciliationSummary = {
     unresolvedReconciliationCount: number;
     comparisonCoverageCounts: Record<string, number>;
     skippedAccountingFields: Record<string, number>;
+    internalIdentifierCoverage: Record<string, number>;
+    internalIdentifierProvenanceCounts: Record<string, number>;
     matchedOrdersWithAccountingAgreement: number;
     matchedOrdersWithAccountingDisagreement: number;
     lastComparisonMode: ReconciliationInput["comparisonMode"] | null;

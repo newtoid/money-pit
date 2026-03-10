@@ -1,6 +1,8 @@
 import {
     ExecutionRequest,
     FillEvent,
+    FillEventExternalIdentifiers,
+    OrderExternalIdentifiers,
     OrderLifecycleRecord,
     OrderLifecycleState,
     OrderLifecycleSummary,
@@ -62,6 +64,12 @@ export class OrderLifecycleStore {
                 terminalState: null,
                 createdAtMs: request.createdAtMs,
                 updatedAtMs: request.createdAtMs,
+                externalIdentifiers: {
+                    externalOrderId: null,
+                    externalExecutionId: null,
+                    venueOrderRef: null,
+                    provenance: "none",
+                },
                 history: [{
                     fromState: null,
                     toState: "created",
@@ -132,6 +140,13 @@ export class OrderLifecycleStore {
                     filledSize: legUpdate.filledSize,
                     averageFillPrice: legUpdate.averageFillPrice,
                     ts: update.ts,
+                    externalIdentifiers: {
+                        externalOrderId: null,
+                        externalExecutionId: null,
+                        externalFillId: null,
+                        venueOrderRef: null,
+                        provenance: "none",
+                    },
                 });
                 this.fillEvents.set(orderId, current);
             }
@@ -203,6 +218,25 @@ export class OrderLifecycleStore {
 
     getAllFillEvents() {
         return Array.from(this.fillEvents.values()).flatMap((items) => items.map((item) => ({ ...item })));
+    }
+
+    attachOrderExternalIdentifiers(orderId: string, identifiers: OrderExternalIdentifiers, ts: number) {
+        const order = this.orders.get(orderId);
+        if (!order) throw new Error(`Order ${orderId} not found`);
+        order.externalIdentifiers = { ...identifiers };
+        order.updatedAtMs = ts;
+    }
+
+    attachFillEventExternalIdentifiers(args: {
+        orderId: string;
+        fillEventIndex: number;
+        identifiers: FillEventExternalIdentifiers;
+    }) {
+        const fillEvents = this.fillEvents.get(args.orderId);
+        if (!fillEvents) throw new Error(`Fill events for order ${args.orderId} not found`);
+        const event = fillEvents[args.fillEventIndex];
+        if (!event) throw new Error(`Fill event ${args.fillEventIndex} for order ${args.orderId} not found`);
+        event.externalIdentifiers = { ...args.identifiers };
     }
 
     private findOrderId(executionAttemptId: string, legId: string) {
