@@ -17,6 +17,7 @@
     "baseline:export": "tsx src/scripts/runInternalBaselineExport.ts",
     "live:submit-probe": "tsx src/scripts/runLiveSubmissionProbe.ts",
     "live:submit-once": "tsx src/scripts/runLiveSubmitOnce.ts",
+    "live:verify-once": "tsx src/scripts/runLiveVerifyOnce.ts",
     "replay": "tsx scripts/replay.ts",
     "doctor": "tsx scripts/doctor.ts"
   },

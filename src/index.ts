@@ -22,6 +22,7 @@ export * from "./live/createExecutionAdapter";
 export * from "./live/orderLifecycle";
 export * from "./live/liveSubmission";
 export * from "./live/liveOrderPilot";
+export * from "./live/livePostSubmitVerification";
 export * from "./live/balanceReconciliation";
 export * from "./live/accountSnapshotIngestion";
 export * from "./live/internalBaseline";
