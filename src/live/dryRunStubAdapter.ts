@@ -1,6 +1,7 @@
 import { ExecutionAdapter } from "./executionAdapter";
-import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, TimeoutResult } from "./types";
+import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, TimeoutResult } from "./types";
 import { OrderLifecycleStore } from "./orderLifecycle";
+import { ExternalReconciliationStore, runNoopReconciliation } from "./reconciliationModel";
 
 type StoredAttempt = {
     request: ExecutionRequest;
@@ -11,6 +12,7 @@ export class DryRunStubExecutionAdapter implements ExecutionAdapter {
     readonly mode = "dry_run_stub" as const;
     private readonly attempts = new Map<string, StoredAttempt>();
     private readonly orderLifecycle = new OrderLifecycleStore();
+    private readonly reconciliation = new ExternalReconciliationStore();
 
     constructor(
         private readonly opts: {
@@ -104,6 +106,13 @@ export class DryRunStubExecutionAdapter implements ExecutionAdapter {
         };
     }
 
+    reconcileWithExternalState(input: ReconciliationInput): ReconciliationResult {
+        return this.reconciliation.record(runNoopReconciliation({
+            adapterMode: this.mode,
+            input,
+        }));
+    }
+
     markExecutionTimedOut(executionAttemptId: string): TimeoutResult {
         const attempt = this.attempts.get(executionAttemptId);
         if (!attempt) {
@@ -146,6 +155,7 @@ export class DryRunStubExecutionAdapter implements ExecutionAdapter {
             orderStatusCounts,
             trackedExecutionAttemptIds: this.orderLifecycle.getTrackedExecutionAttemptIds(),
             orderLifecycleSummary: this.orderLifecycle.getSummary(),
+            externalReconciliationSummary: this.reconciliation.getSummary(),
         };
     }
 }

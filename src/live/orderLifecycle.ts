@@ -197,6 +197,14 @@ export class OrderLifecycleStore {
         return Array.from(this.orderIdsByExecutionAttempt.keys());
     }
 
+    getAllOrderRecords() {
+        return Array.from(this.orders.values()).map((item) => this.snapshot(item.orderId)!).filter(Boolean);
+    }
+
+    getAllFillEvents() {
+        return Array.from(this.fillEvents.values()).flatMap((items) => items.map((item) => ({ ...item })));
+    }
+
     private findOrderId(executionAttemptId: string, legId: string) {
         return (this.orderIdsByExecutionAttempt.get(executionAttemptId) ?? []).find((orderId) => this.orders.get(orderId)?.legId === legId) ?? null;
     }

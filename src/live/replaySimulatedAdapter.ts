@@ -1,11 +1,13 @@
 import { ExecutionAdapter } from "./executionAdapter";
-import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, TimeoutResult } from "./types";
+import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, TimeoutResult } from "./types";
 import { OrderLifecycleStore } from "./orderLifecycle";
+import { buildInternalReconciliationSnapshots, ExternalReconciliationStore, runExternalReconciliation } from "./reconciliationModel";
 
 export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
     readonly mode = "replay_simulated" as const;
     private readonly submitResults = new Map<string, ExecutionSubmitResult>();
     private readonly orderLifecycle = new OrderLifecycleStore();
+    private readonly reconciliation = new ExternalReconciliationStore();
 
     constructor(
         private readonly opts: {
@@ -87,6 +89,18 @@ export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
         };
     }
 
+    reconcileWithExternalState(input: ReconciliationInput): ReconciliationResult {
+        const internalOrders = buildInternalReconciliationSnapshots({
+            orders: this.orderLifecycle.getAllOrderRecords(),
+            fillEvents: this.orderLifecycle.getAllFillEvents(),
+        });
+        return this.reconciliation.record(runExternalReconciliation({
+            adapterMode: this.mode,
+            input,
+            internalOrders,
+        }));
+    }
+
     markExecutionTimedOut(executionAttemptId: string): TimeoutResult {
         if (!this.submitResults.has(executionAttemptId)) {
             return {
@@ -127,6 +141,7 @@ export class ReplaySimulatedExecutionAdapter implements ExecutionAdapter {
                 }, {}),
             trackedExecutionAttemptIds: this.orderLifecycle.getTrackedExecutionAttemptIds(),
             orderLifecycleSummary: this.orderLifecycle.getSummary(),
+            externalReconciliationSummary: this.reconciliation.getSummary(),
         };
     }
 }

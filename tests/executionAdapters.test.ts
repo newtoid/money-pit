@@ -63,6 +63,21 @@ test("dry_run_stub accepts requests without creating live behavior", () => {
     assert.equal(result.accepted, true);
     assert.equal(adapter.reconcileExecutionState().totalExecutionRequests, 1);
     assert.equal(adapter.reconcileExecutionState().orderLifecycleSummary.reconciliationPendingCount, 2);
+    const reconciliation = adapter.reconcileWithExternalState({
+        capturedAtMs: 1200,
+        comparisonMode: "noop_stub",
+        snapshot: {
+            sourceLabel: "stub-noop",
+            capturedAtMs: 1200,
+            maxSnapshotAgeMs: null,
+            trustworthy: false,
+            orders: [],
+            fills: [],
+            rawSourceMetadata: null,
+        },
+    });
+    assert.equal(reconciliation.comparisonMode, "noop_stub");
+    assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.reconciliationRuns, 1);
 });
 
 test("future_live_clob remains inert and clearly denied", () => {
@@ -116,4 +131,5 @@ test("replay_simulated adapter records scaffold submissions", () => {
     assert.equal(reconciliation.liveExecutionEnabled, false);
     assert.equal(reconciliation.executionKillSwitch, true);
     assert.equal(reconciliation.orderLifecycleSummary.ordersByTerminalState.reconciled, 2);
+    assert.equal(reconciliation.externalReconciliationSummary.reconciliationRuns, 0);
 });

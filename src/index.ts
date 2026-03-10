@@ -15,6 +15,7 @@ export * from "./live/executionAdapter";
 export * from "./live/buildExecutionRequest";
 export * from "./live/createExecutionAdapter";
 export * from "./live/orderLifecycle";
+export * from "./live/reconciliationModel";
 export * from "./recording/recorder";
 export * from "./recording/replayReader";
 export * from "./util/logger";
