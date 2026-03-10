@@ -3,7 +3,7 @@ import * as assert from "node:assert/strict";
 import { buildExecutionRequest } from "../src/live/buildExecutionRequest";
 import { createExecutionAdapter } from "../src/live/createExecutionAdapter";
 import { Opportunity } from "../src/arbScanner/types";
-import { buildExternalAccountSnapshot, buildInternalAccountSnapshot } from "./helpers/reconciliationFixtures";
+import { buildExternalAccountSnapshot, buildExternalAccountSnapshotIngestion, buildInternalAccountSnapshot } from "./helpers/reconciliationFixtures";
 
 function sampleOpportunity(): Opportunity {
     return {
@@ -163,5 +163,12 @@ test("replay_simulated adapter records scaffold submissions", () => {
         externalAccount: buildExternalAccountSnapshot(),
     });
     assert.equal(balanceResult.matchedAssetCount, 2);
-    assert.equal(adapter.reconcileExecutionState().externalBalanceReconciliationSummary.reconciliationRuns, 1);
+    const ingestedAccount = adapter.ingestExternalAccountSnapshot(buildExternalAccountSnapshotIngestion({
+        provenance: "synthetic_test_account_snapshot",
+        sourceLabel: "adapter-account-ingestion",
+    }));
+    assert.equal(ingestedAccount.normalization.accepted, true);
+    const summary = adapter.reconcileExecutionState().externalBalanceReconciliationSummary;
+    assert.equal(summary.reconciliationRuns, 1);
+    assert.equal(summary.ingestedAccountSnapshotsByProvenance.synthetic_test_account_snapshot, 1);
 });

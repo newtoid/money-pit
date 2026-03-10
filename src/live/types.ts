@@ -273,6 +273,11 @@ export type ExternalSnapshotProvenance =
     | "replay_generated_snapshot"
     | "future_external_api_shape";
 
+export type ExternalAccountSnapshotProvenance =
+    | "synthetic_test_account_snapshot"
+    | "replay_generated_account_snapshot"
+    | "future_external_account_api_shape";
+
 export type ExternalExecutionSnapshot = {
     provenance: ExternalSnapshotProvenance;
     sourceLabel: string;
@@ -562,7 +567,7 @@ export type ExternalReservedBalanceSnapshot = {
 
 export type ExternalAccountSnapshot = {
     accountId: string | null;
-    provenance: ExternalSnapshotProvenance;
+    provenance: ExternalAccountSnapshotProvenance;
     sourceLabel: string;
     capturedAtMs: number;
     maxSnapshotAgeMs: number | null;
@@ -614,7 +619,7 @@ export type BalanceReconciliationResult = {
     adapterMode: ExecutionMode;
     comparisonMode: BalanceReconciliationInput["comparisonMode"];
     capturedAtMs: number;
-    snapshotProvenance: ExternalSnapshotProvenance;
+    snapshotProvenance: ExternalAccountSnapshotProvenance;
     snapshotSourceLabel: string;
     snapshotTrustworthy: boolean;
     issueCountsByType: Record<string, number>;
@@ -650,4 +655,69 @@ export type ExternalBalanceReconciliationSummary = {
     trustworthySnapshotCount: number;
     untrustworthySnapshotCount: number;
     snapshotsByProvenance: Record<string, number>;
+    ingestedAccountSnapshotsByProvenance: Record<string, number>;
+    malformedAccountSnapshotRejectCount: number;
+    staleAccountSnapshotInputCount: number;
+    accountSnapshotNormalizationWarningCounts: Record<string, number>;
+    accountSnapshotsMissingKeyBalanceFields: number;
+};
+
+export type ExternalAssetBalanceIngestion = {
+    assetSymbol?: string | null;
+    availableBalance?: number | string | null;
+    reservedBalance?: number | string | null;
+    totalBalance?: number | string | null;
+    rawSourceMetadata?: Record<string, unknown> | null;
+};
+
+export type ExternalReservedBalanceIngestion = {
+    assetSymbol?: string | null;
+    reservationType?: string | null;
+    amount?: number | string | null;
+    rawSourceMetadata?: Record<string, unknown> | null;
+};
+
+export type ExternalAccountSnapshotIngestion = {
+    provenance: ExternalAccountSnapshotProvenance;
+    sourceLabel: string;
+    accountId?: string | null;
+    capturedAtMs?: number | string | null;
+    ingestedAtMs?: number | string | null;
+    maxSnapshotAgeMs?: number | string | null;
+    trustworthy?: boolean | null;
+    assets?: ExternalAssetBalanceIngestion[] | null;
+    reservedBalances?: ExternalReservedBalanceIngestion[] | null;
+    rawSourceMetadata?: Record<string, unknown> | null;
+};
+
+export type AccountSnapshotNormalizationWarningType =
+    | "missing_asset_symbol"
+    | "missing_reserved_balance_key"
+    | "missing_balance_field"
+    | "invalid_numeric_field"
+    | "missing_timestamp"
+    | "stale_account_snapshot_input";
+
+export type AccountSnapshotNormalizationWarning = {
+    warningType: AccountSnapshotNormalizationWarningType;
+    scope: "snapshot" | "asset" | "reserved_balance";
+    message: string;
+    details: Record<string, number | string | boolean | null>;
+};
+
+export type AccountSnapshotIngestionRejectReason =
+    | "missing_source_label"
+    | "invalid_captured_at"
+    | "missing_account_snapshot_payload";
+
+export type AccountSnapshotNormalizationResult = {
+    accepted: boolean;
+    rejectReason: AccountSnapshotIngestionRejectReason | null;
+    snapshot: ExternalAccountSnapshot | null;
+    warnings: AccountSnapshotNormalizationWarning[];
+};
+
+export type AccountSnapshotIngestionResult = {
+    normalization: AccountSnapshotNormalizationResult;
+    reconciliation: BalanceReconciliationResult | null;
 };

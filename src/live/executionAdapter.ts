@@ -1,4 +1,6 @@
 import {
+    AccountSnapshotIngestionResult,
+    ExternalAccountSnapshotIngestion,
     CancelResult,
     BalanceReconciliationInput,
     BalanceReconciliationResult,
@@ -26,6 +28,8 @@ export interface ExecutionAdapter {
     recordSimulatedOrderLifecycle(update: SimulatedOrderLifecycleUpdate): ExecutionStatusResult;
 
     ingestExternalSnapshot(input: ExternalSnapshotExecutionIngestion): SnapshotIngestionResult;
+
+    ingestExternalAccountSnapshot(input: ExternalAccountSnapshotIngestion): AccountSnapshotIngestionResult;
 
     reconcileWithExternalState(input: ReconciliationInput): ReconciliationResult;
 
