@@ -141,10 +141,15 @@
   - deny-by-default guard layer with machine-readable reason codes
   - future-live adapter path that constructs denied submission attempts
   - safe `live:submit-probe` entrypoint for local guard validation
+- [x] Add one-shot live order submission pilot path:
+  - single manual order submission path only
+  - extreme safety gates and explicit pilot mode
+  - structured terminal result with venue ack/external id if returned
+  - immediate reconciliation follow-up command and order baseline output
 
 ## Next Phase
 
-- [ ] Add authenticated read-only venue state into a future live-submission readiness review path before any real submit implementation is considered.
+- [ ] Add explicit post-submit read-only verification helpers around live pilot results before any broader live execution work.
 
 ## Later
 
