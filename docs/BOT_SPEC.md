@@ -62,6 +62,7 @@ This repo currently implements:
 - explicit external identifier and snapshot-ingestion scaffolding behind the reconciliation model
 - explicit partial-identifier matching-rules scaffolding behind reconciliation
 - explicit external-state reconciliation accounting refinements behind matching
+- explicit internal external-identifier carriage plus richer synthetic reconciliation fixtures behind reconciliation
 
 Not yet implemented in this phase:
 
@@ -147,6 +148,16 @@ Not yet implemented in this phase:
     - `future_external_api_shape`
   - malformed or stale ingested snapshots are surfaced through explicit warnings or reject counts
   - no missing external ids are invented silently
+- Internal external-identifier population scaffolding is now explicit:
+  - internal order records can now carry optional `externalOrderId`, `externalExecutionId`, and `venueOrderRef`
+  - internal fill records can now carry optional `externalFillId` plus related external order/execution refs
+  - those internal ids are empty by default in normal runtime paths
+  - synthetic tests and scaffolding can attach them explicitly with machine-readable provenance
+  - current stable internal identifier provenance values are:
+    - `none`
+    - `synthetic_fixture`
+    - `future_external_identifier_scaffold`
+  - runtime code does not fabricate venue ids silently
 - Partial-identifier reconciliation matching is now explicit:
   - matching rules live in a separate deterministic layer
   - precedence is explicit and machine-readable
@@ -156,3 +167,11 @@ Not yet implemented in this phase:
   - matched orders can compare external fill count, average fill price, filled notional, status progression, and partial-fill state against internal accounting snapshots
   - insufficient accounting data is reported explicitly through skipped-field counts
   - reconciliation remains read-only and does not mutate portfolio or order state
+- Synthetic reconciliation fixture coverage is now richer:
+  - full external-id matches
+  - partial-id matches and partial-id insufficiency
+  - conflicting identifiers
+  - duplicate external identifiers
+  - missing identifiers with otherwise valid accounting fields
+  - differing fill/event shapes for partial fills
+  - status progression disagreement with otherwise comparable quantities
