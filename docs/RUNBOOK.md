@@ -265,6 +265,27 @@ tsx scripts/doctor.ts
   - reconciliation output is a structured comparison result, not venue truth
   - normalization never invents missing external identifiers
 
+## Matching Rules Layer
+
+- Matching rules live separately from normalization and reconciliation diffing.
+- Current deterministic precedence is:
+  - `matched_by_external_order_id`
+  - `matched_by_external_execution_id`
+  - `matched_by_external_fill_id`
+  - `matched_by_execution_attempt_leg`
+  - `matched_by_internal_correlation`
+- Current machine-readable unmatched/ambiguity/conflict outcomes include:
+  - `unmatched_missing_identifiers`
+  - `partial_identifier_insufficient`
+  - `unmatched_ambiguous_candidates`
+  - `conflicting_identifier_data`
+  - `duplicate_external_snapshot`
+  - `duplicate_internal_candidates`
+- Important:
+  - ambiguous cases remain unresolved
+  - missing identifiers are not invented
+  - no probabilistic or venue-inference matching exists in this phase
+
 ## Execution Attempt Lifecycle
 
 - Replay and paper both emit execution-attempt records.

@@ -314,3 +314,23 @@ Consequence:
   - `replay_generated_snapshot`
   - `future_external_api_shape`
 - reconciliation summaries now include ingestion provenance counts, missing-identifier counts, malformed snapshot reject counts, stale-input counts, and normalization warning counts
+
+### Add a separate deterministic matching-rules layer for partial identifiers
+
+Reason:
+
+- matching logic should not stay smeared across reconciliation diff code
+- partial identifiers are inherently ambiguous and need explicit precedence plus explicit failure states
+- the system should report why something did not match instead of silently guessing
+
+Consequence:
+
+- matching rules now live in their own layer under `src/live/`
+- precedence is explicit and stable:
+  - external order id
+  - external execution id
+  - external fill id where applicable
+  - `(executionAttemptId, legId)`
+  - internal correlation fallback
+- ambiguity, conflicts, and duplicates remain machine-readable outcomes instead of implicit behavior
+- reconciliation summaries now expose match counts by rule, unmatched counts by reason, ambiguous counts, conflicting identifier counts, and duplicate snapshot counts

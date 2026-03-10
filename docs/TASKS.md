@@ -89,10 +89,15 @@
   - explicit raw ingestion shapes for orders, fills, and execution snapshots
   - normalization into reconciliation-ready snapshot types
   - provenance-based ingestion reporting and normalization warning counts
+- [x] Add partial-identifier reconciliation matching scaffolding:
+  - explicit matching-rules layer
+  - deterministic rule precedence
+  - ambiguity/conflict/duplicate handling
+  - match-rule and unmatched-reason reporting
 
 ## Next Phase
 
-- [ ] Add venue-shaped reconciliation matching refinements on top of the non-live snapshot-ingestion model.
+- [ ] Add venue-state reconciliation accounting refinements on top of the non-live matching layer.
 
 ## Later
 
