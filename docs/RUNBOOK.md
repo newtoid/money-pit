@@ -102,6 +102,38 @@ Important:
 - current balance/allowance reads do not provide authoritative reserved or total balances
 - missing reserved/total fields are surfaced as warnings instead of being invented
 
+## Real-Data Reconciliation Probe
+
+Run the on-demand real-data reconciliation probe:
+
+```bash
+npm run venue:reconcile
+```
+
+Optional probe env vars:
+
+- `REAL_DATA_RECONCILIATION_ENABLED`
+- `REAL_DATA_RECONCILIATION_OUTPUT_PATH`
+- `REAL_DATA_INTERNAL_ORDER_SNAPSHOT_PATH`
+- `REAL_DATA_INTERNAL_ACCOUNT_SNAPSHOT_PATH`
+
+Behavior:
+
+- confirms read-only mode, `LIVE_EXECUTION_ENABLED=false`, and `EXECUTION_KILL_SWITCH=true`
+- fetches authenticated read-only venue data
+- reuses existing normalization layers
+- runs order/account reconciliation only where normalized data exists
+- prints a structured JSON result to stdout
+- writes the same structured result to `REAL_DATA_RECONCILIATION_OUTPUT_PATH` if configured
+
+Important:
+
+- internal baselines are optional and explicit
+- if no internal order baseline is provided, external orders will only surface as unexpected or unmatched
+- if no internal account baseline is provided, external balances will only surface as unexpected or uncovered
+- this probe does not mutate internal accounting or portfolio state
+- this probe does not enable any trading capability
+
 ## Important Operational Notes
 
 - Replay assumes deterministic strategy evaluation over recorded data.
@@ -315,6 +347,15 @@ Important:
   - provenance/source counts
   - stale-input warning counts
   - partial real-data warning counts
+- Real-data reconciliation probe reporting currently includes:
+  - read-only fetch counts and failures
+  - normalization accepted/rejected/warning counts
+  - reconciliation issue counts by type
+  - balance reconciliation issue counts by type
+  - match counts and unmatched counts
+  - comparison coverage counts
+  - provenance/source counts
+  - explicit limitation counts for missing baselines and partial real-data coverage
   - internal identifier coverage:
     - orders with external order ids
     - orders with external execution ids

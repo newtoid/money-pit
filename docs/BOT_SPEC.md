@@ -66,6 +66,7 @@ This repo currently implements:
 - explicit external account / balance reconciliation scaffolding behind the adapter boundary
 - explicit raw external account snapshot ingestion / normalization scaffolding behind balance reconciliation
 - explicit authenticated read-only venue integration scaffolding that fetches real venue data into existing normalization layers without enabling trading
+- explicit real-data reconciliation probe/orchestration that runs authenticated read-only snapshots through existing normalization and reconciliation layers on demand
 
 Not yet implemented in this phase:
 
@@ -198,6 +199,14 @@ Not yet implemented in this phase:
   - current balance reads expose `balance` and `allowance`, but not authoritative reserved/total balance fields
   - missing reserved/total values remain explicit warnings instead of being invented
   - fetched data does not mutate internal accounting, order state, or portfolio truth
+- Real-data reconciliation probe/orchestration is now scaffolded and remains strictly non-trading:
+  - it is an on-demand orchestration path, not a live loop
+  - it reuses the existing read-only fetch layer, order snapshot normalization, account snapshot normalization, order reconciliation, accounting comparison, and balance reconciliation modules
+  - it can run with optional internal baseline JSON files for order/account comparison
+  - if no internal baselines are provided, it still runs and reports missing/partial comparison coverage explicitly
+  - it can emit a structured JSON result to disk
+  - it does not mutate internal accounting or portfolio state
+  - it does not enable any submit/cancel capability
 - Synthetic reconciliation fixture coverage is now richer:
   - full external-id matches
   - partial-id matches and partial-id insufficiency

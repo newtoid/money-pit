@@ -121,10 +121,15 @@
   - strict safety gates that keep execution disabled and kill switch enabled
   - normalization of fetched order/trade/account data through existing ingestion layers
   - reporting for fetch success/failure, normalization outcomes, provenance, and partial/stale real-data warnings
+- [x] Add real-data reconciliation probe/orchestration:
+  - on-demand probe that fetches authenticated read-only venue data
+  - reuse of existing normalization, reconciliation, accounting-comparison, and balance-comparison layers
+  - optional internal baseline JSON inputs for order/account comparison
+  - structured JSON output plus explicit partial-coverage reporting
 
 ## Next Phase
 
-- [ ] Add read-only fetched-data reconciliation probes that run real venue snapshots through the existing reconciliation/accounting summaries without mutating internal state.
+- [ ] Add internal baseline export/capture scaffolding so real-data reconciliation can compare against repeatable internal snapshots without hand-written JSON fixtures.
 
 ## Later
 
