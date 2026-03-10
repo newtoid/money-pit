@@ -1,5 +1,6 @@
 export * from "./config/arb";
 export * from "./config/readOnlyVenue";
+export * from "./config/realDataReconciliation";
 export * from "./adapters/gamma";
 export * from "./adapters/clobWs";
 export * from "./adapters/fees";
@@ -23,6 +24,7 @@ export * from "./live/reconciliationAccounting";
 export * from "./live/reconciliationModel";
 export * from "./live/reconciliationMatching";
 export * from "./live/snapshotIngestion";
+export * from "./live/realDataReconciliationProbe";
 export * from "./recording/recorder";
 export * from "./recording/replayReader";
 export * from "./util/logger";
