@@ -63,6 +63,17 @@ function trimCreds(
     return { apiKey, secret, passphrase };
 }
 
+export function readClobApiCredsFromEnv(): ClobApiCreds | null {
+    return trimCreds({
+        apiKey: readCredFromEnv("POLYMARKET_CLOB_API_KEY", "CLOB_API_KEY")
+            ?? env.POLYMARKET_CLOB_API_KEY,
+        secret: readCredFromEnv("POLYMARKET_CLOB_SECRET", "CLOB_API_SECRET")
+            ?? env.POLYMARKET_CLOB_SECRET,
+        passphrase: readCredFromEnv("POLYMARKET_CLOB_PASSPHRASE", "CLOB_API_PASSPHRASE")
+            ?? env.POLYMARKET_CLOB_PASSPHRASE,
+    });
+}
+
 function redactCreds(creds: ClobApiCreds) {
     return {
         apiKey: "***",
@@ -163,14 +174,7 @@ export async function ensureClobApiCreds(): Promise<ClobCredsBootstrap> {
         "Using CLOB auth mode",
     );
 
-    const envCreds = trimCreds({
-        apiKey: readCredFromEnv("POLYMARKET_CLOB_API_KEY", "CLOB_API_KEY")
-            ?? env.POLYMARKET_CLOB_API_KEY,
-        secret: readCredFromEnv("POLYMARKET_CLOB_SECRET", "CLOB_API_SECRET")
-            ?? env.POLYMARKET_CLOB_SECRET,
-        passphrase: readCredFromEnv("POLYMARKET_CLOB_PASSPHRASE", "CLOB_API_PASSPHRASE")
-            ?? env.POLYMARKET_CLOB_PASSPHRASE,
-    });
+    const envCreds = readClobApiCredsFromEnv();
 
     if (envCreds) {
         const validation = await validateApiCreds(privateKey, envCreds, authMode);

@@ -1,5 +1,5 @@
 export type ExecutionMode = "dry_run_stub" | "replay_simulated" | "future_live_clob";
-export type LiveSubmissionMode = "disabled" | "future_live_clob_guarded";
+export type LiveSubmissionMode = "disabled" | "future_live_clob_guarded" | "one_shot_live_pilot";
 
 export type ExecutionRequestSource = "paper" | "replay";
 
@@ -76,14 +76,18 @@ export type OrderLifecycleTransitionReason =
     | "submit_denied_live_not_implemented"
     | "submitted_by_dry_run_stub"
     | "submitted_by_replay_simulated"
+    | "submitted_by_live_pilot"
     | "acknowledged_by_stub"
+    | "acknowledged_by_live_pilot"
     | "opened_by_stub"
+    | "opened_by_live_pilot"
     | "partially_filled_by_replay_simulation"
     | "filled_by_replay_simulation"
     | "cancel_requested_by_adapter"
     | "cancelled_by_stub"
     | "expired_by_stub_timeout"
     | "rejected_by_stub"
+    | "rejected_by_live_pilot"
     | "reconciliation_requested"
     | "reconciled_by_stub";
 
@@ -180,7 +184,8 @@ export type LiveSubmissionGuardReason =
     | "order_size_above_cap"
     | "max_order_size_cap_missing"
     | "environment_confirmation_missing"
-    | "live_submission_not_implemented_in_phase";
+    | "live_submission_not_implemented_in_phase"
+    | "pilot_size_cap_not_tiny_enough";
 
 export type LiveOrderSubmissionRequest = {
     executionAttemptId: string;
@@ -249,6 +254,47 @@ export type LiveSubmissionSummary = {
         allowlistedAssets: string[];
         requiredEnvironmentConfirmationConfigured: boolean;
     };
+};
+
+export type LivePilotTerminalState =
+    | "denied"
+    | "submitted_acknowledged"
+    | "submitted_unknown"
+    | "failed";
+
+export type LivePilotVenueAckSnapshot = {
+    acknowledged: boolean;
+    externalOrderId: string | null;
+    rawStatus: string | null;
+    rawResponse: Record<string, unknown> | null;
+};
+
+export type LiveOrderPilotRequest = {
+    marketId: string;
+    assetId: string;
+    side: "buy" | "sell";
+    price: number;
+    size: number;
+    tickSize: string;
+    timeInForce: "GTC";
+    confirmValue: string | null;
+    invokedAtMs: number;
+};
+
+export type LiveOrderPilotResult = {
+    terminalState: LivePilotTerminalState;
+    requestSent: boolean;
+    denied: boolean;
+    submittedAtMs: number | null;
+    executionAttemptId: string;
+    guard: LiveSubmissionGuardResult;
+    venueAck: LivePilotVenueAckSnapshot | null;
+    internalOrderBaselinePath: string | null;
+    resultOutputPath: string | null;
+    followUp: {
+        recommendedReconcileCommand: string;
+    };
+    message: string;
 };
 
 export type ExecutionStatusResult = {

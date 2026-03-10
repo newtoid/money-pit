@@ -33,7 +33,12 @@ export function loadLiveSubmissionConfig(): LiveSubmissionConfig {
     return {
         liveExecutionEnabled: envBool("LIVE_EXECUTION_ENABLED", false),
         executionKillSwitch: envBool("EXECUTION_KILL_SWITCH", true),
-        liveSubmissionMode: mode === "future_live_clob_guarded" ? "future_live_clob_guarded" : "disabled",
+        liveSubmissionMode:
+            mode === "future_live_clob_guarded"
+                ? "future_live_clob_guarded"
+                : mode === "one_shot_live_pilot"
+                    ? "one_shot_live_pilot"
+                    : "disabled",
         allowlistedMarkets: envStringList("LIVE_SUBMISSION_ALLOWLIST_MARKETS"),
         allowlistedAssets: envStringList("LIVE_SUBMISSION_ALLOWLIST_ASSETS"),
         maxOrderSize: Math.max(0, envNumber("LIVE_SUBMISSION_MAX_ORDER_SIZE", 0)),
