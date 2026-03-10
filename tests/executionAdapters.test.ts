@@ -3,6 +3,7 @@ import * as assert from "node:assert/strict";
 import { buildExecutionRequest } from "../src/live/buildExecutionRequest";
 import { createExecutionAdapter } from "../src/live/createExecutionAdapter";
 import { Opportunity } from "../src/arbScanner/types";
+import { buildExternalAccountSnapshot, buildInternalAccountSnapshot } from "./helpers/reconciliationFixtures";
 
 function sampleOpportunity(): Opportunity {
     return {
@@ -155,4 +156,12 @@ test("replay_simulated adapter records scaffold submissions", () => {
     assert.equal(reconciliation.executionKillSwitch, true);
     assert.equal(reconciliation.orderLifecycleSummary.ordersByTerminalState.reconciled, 2);
     assert.equal(reconciliation.externalReconciliationSummary.reconciliationRuns, 0);
+    const balanceResult = adapter.reconcileAccountBalances({
+        capturedAtMs: 1200,
+        comparisonMode: "synthetic_external_account_snapshot_compare",
+        internalAccount: buildInternalAccountSnapshot(),
+        externalAccount: buildExternalAccountSnapshot(),
+    });
+    assert.equal(balanceResult.matchedAssetCount, 2);
+    assert.equal(adapter.reconcileExecutionState().externalBalanceReconciliationSummary.reconciliationRuns, 1);
 });
