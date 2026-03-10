@@ -258,6 +258,47 @@ tsx scripts/doctor.ts
   - snapshots missing external identifiers
   - malformed snapshot reject counts
   - normalization warning counts
+  - internal identifier coverage:
+    - orders with external order ids
+    - orders with external execution ids
+    - orders with venue refs
+    - orders with external fill ids
+    - orders without external identifiers
+  - internal identifier provenance counts
+
+## Internal External-Identifier Scaffolding
+
+- Internal order lifecycle records can now carry optional future-facing external ids:
+  - `externalOrderId`
+  - `externalExecutionId`
+  - `venueOrderRef`
+- Internal fill records can now carry optional:
+  - `externalFillId`
+  - related external order/execution refs
+- Stable internal identifier provenance values are:
+  - `none`
+  - `synthetic_fixture`
+  - `future_external_identifier_scaffold`
+- Important:
+  - normal runtime does not fabricate these ids
+  - synthetic fixture/test paths may attach them explicitly
+  - reconciliation reporting now exposes how much internal state has identifier coverage vs none
+
+## Synthetic Reconciliation Fixtures
+
+- Synthetic reconciliation fixtures remain clearly non-live.
+- They currently exercise:
+  - full external-id matches
+  - partial-id matches
+  - insufficient-id unmatched cases
+  - conflicting identifiers
+  - duplicate external identifiers
+  - missing identifiers with otherwise valid accounting fields
+  - partial fills with differing fill/event shapes
+  - status progression disagreement with otherwise comparable quantities
+- Fixture provenance stays separate from future real-source concepts:
+  - synthetic snapshots use `synthetic_test_snapshot`
+  - future external-shape ingestion remains labeled `future_external_api_shape`
 - Important:
   - this is still fully non-live
   - no authenticated exchange snapshot source exists

@@ -214,6 +214,22 @@ Consequence:
 - queue realism is deterministic and replay-only
 - reports now show queue-limited no-fill/partial-fill counts and visible-to-fillable haircut metrics
 
+### Carry future external identifiers explicitly on internal records, but never fabricate them in runtime
+
+Reason:
+
+- reconciliation needs a clean place for future venue ids to live once real venue-facing plumbing exists
+- test and synthetic reconciliation coverage needs those ids now
+- inventing fake runtime venue ids would create false confidence and blur synthetic vs future-real state
+
+Consequence:
+
+- internal order records now carry optional external order/execution refs plus provenance
+- internal fill records now carry optional external fill refs plus provenance
+- normal runtime leaves those fields unset with provenance `none`
+- only explicit synthetic fixture/scaffold paths may attach synthetic ids
+- reconciliation reports now surface internal identifier coverage and provenance counts
+
 ### Add an explicit execution-attempt state machine before live execution scaffolding
 
 Reason:

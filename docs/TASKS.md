@@ -101,10 +101,15 @@
   - status-progression comparison
   - partial-fill-state comparison
   - coverage and skipped-field reporting
+- [x] Add external-identifier population scaffolding and richer synthetic reconciliation fixtures:
+  - optional external-id carriage on internal order/fill records
+  - explicit internal identifier provenance labels
+  - richer synthetic fixture scenarios for matching and accounting disagreement
+  - identifier coverage reporting for reconciliation comparisons
 
 ## Next Phase
 
-- [ ] Add venue-facing identifier population and richer synthetic external state fixtures on top of the non-live accounting comparison layer.
+- [ ] Add non-live venue account / balance reconciliation scaffolding on top of the current order-level reconciliation layer.
 
 ## Later
 
