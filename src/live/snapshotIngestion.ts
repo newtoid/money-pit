@@ -80,6 +80,8 @@ function normalizeOrder(
         });
     }
     const observedAtMs = parseNumberLike(order.observedAtMs);
+    const externalFillCount = parseNumberLike(order.externalFillCount);
+    const totalFilledNotional = parseNumberLike(order.totalFilledNotional);
     if (observedAtMs === null) {
         warnings.push({
             warningType: "missing_timestamp",
@@ -88,6 +90,28 @@ function normalizeOrder(
             details: {
                 index,
                 field: "observedAtMs",
+            },
+        });
+    }
+    if (order.externalFillCount !== undefined && order.externalFillCount !== null && externalFillCount === null) {
+        warnings.push({
+            warningType: "invalid_numeric_field",
+            scope: "order",
+            message: "invalid external fill count normalized to null",
+            details: {
+                index,
+                field: "externalFillCount",
+            },
+        });
+    }
+    if (order.totalFilledNotional !== undefined && order.totalFilledNotional !== null && totalFilledNotional === null) {
+        warnings.push({
+            warningType: "invalid_numeric_field",
+            scope: "order",
+            message: "invalid total filled notional normalized to null",
+            details: {
+                index,
+                field: "totalFilledNotional",
             },
         });
     }
@@ -127,6 +151,9 @@ function normalizeOrder(
         status: normalizeStatus(parseStringLike(order.status), warnings, `order:${index}`),
         filledSize,
         averageFillPrice,
+        externalFillCount,
+        totalFilledNotional,
+        partialFillObserved: typeof order.partialFillObserved === "boolean" ? order.partialFillObserved : null,
         observedAtMs: observedAtMs ?? 0,
         rawSourceMetadata: order.rawSourceMetadata ?? null,
     };

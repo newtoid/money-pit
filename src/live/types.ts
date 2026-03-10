@@ -192,6 +192,10 @@ export type InternalOrderReconciliationSnapshot = {
     updatedAtMs: number;
     filledSize: number;
     averageFillPrice: number | null;
+    fillEventCount: number;
+    filledNotional: number | null;
+    partialFillObserved: boolean;
+    statusProgressionRank: number;
     knownExternalOrderId: string | null;
     knownExternalExecutionId: string | null;
     knownExternalFillIds: string[];
@@ -220,6 +224,9 @@ export type ExternalOrderSnapshot = {
     status: ExternalOrderStatus;
     filledSize: number | null;
     averageFillPrice: number | null;
+    externalFillCount: number | null;
+    totalFilledNotional: number | null;
+    partialFillObserved: boolean | null;
     observedAtMs: number;
     rawSourceMetadata: Record<string, unknown> | null;
 };
@@ -304,6 +311,28 @@ export type ReconciliationMatchingOutcome = {
     details: Record<string, number | string | boolean | null>;
 };
 
+export type ReconciliationAccountingIssueType =
+    | "external_internal_fill_count_mismatch"
+    | "external_internal_notional_mismatch"
+    | "external_internal_avg_price_mismatch"
+    | "external_internal_status_progression_mismatch"
+    | "external_internal_partial_fill_mismatch";
+
+export type ReconciliationAccountingField =
+    | "fill_count"
+    | "filled_notional"
+    | "avg_fill_price"
+    | "status_progression"
+    | "partial_fill_flag";
+
+export type ReconciliationAccountingComparison = {
+    orderId: string;
+    externalOrderId: string | null;
+    issueTypes: ReconciliationAccountingIssueType[];
+    skippedFields: ReconciliationAccountingField[];
+    details: Record<string, number | string | boolean | null>;
+};
+
 export type ReconciliationDiff = {
     orderId: string | null;
     externalOrderId: string | null;
@@ -317,6 +346,7 @@ export type ReconciliationDiff = {
     internalAverageFillPrice: number | null;
     externalAverageFillPrice: number | null;
     issueTypes: ReconciliationIssueType[];
+    accountingIssueTypes: ReconciliationAccountingIssueType[];
 };
 
 export type ReconciliationResult = {
@@ -327,6 +357,7 @@ export type ReconciliationResult = {
     snapshotSourceLabel: string;
     snapshotTrustworthy: boolean;
     issueCountsByType: Record<ReconciliationIssueType, number>;
+    accountingIssueCountsByType: Record<string, number>;
     matchCountsByRule: Record<string, number>;
     unmatchedCountsByReason: Record<string, number>;
     ambiguousMatchCount: number;
@@ -339,7 +370,12 @@ export type ReconciliationResult = {
     missingExternalOrderIdCount: number;
     staleSnapshotWarningCount: number;
     unresolvedReconciliationCount: number;
+    comparisonCoverageCounts: Record<string, number>;
+    skippedAccountingFields: Record<string, number>;
+    matchedOrdersWithAccountingAgreement: number;
+    matchedOrdersWithAccountingDisagreement: number;
     matchingOutcomes: ReconciliationMatchingOutcome[];
+    accountingComparisons: ReconciliationAccountingComparison[];
     diffs: ReconciliationDiff[];
     issues: ReconciliationIssue[];
 };
@@ -356,6 +392,9 @@ export type ExternalSnapshotOrderIngestion = {
     status?: string | null;
     filledSize?: number | string | null;
     averageFillPrice?: number | string | null;
+    externalFillCount?: number | string | null;
+    totalFilledNotional?: number | string | null;
+    partialFillObserved?: boolean | null;
     observedAtMs?: number | string | null;
     rawSourceMetadata?: Record<string, unknown> | null;
 };
@@ -421,6 +460,7 @@ export type SnapshotIngestionResult = {
 export type ExternalReconciliationSummary = {
     reconciliationRuns: number;
     issueCountsByType: Record<string, number>;
+    accountingIssueCountsByType: Record<string, number>;
     matchCountsByRule: Record<string, number>;
     unmatchedCountsByReason: Record<string, number>;
     ambiguousMatchCount: number;
@@ -433,6 +473,10 @@ export type ExternalReconciliationSummary = {
     missingExternalOrderIdCount: number;
     staleSnapshotWarningCount: number;
     unresolvedReconciliationCount: number;
+    comparisonCoverageCounts: Record<string, number>;
+    skippedAccountingFields: Record<string, number>;
+    matchedOrdersWithAccountingAgreement: number;
+    matchedOrdersWithAccountingDisagreement: number;
     lastComparisonMode: ReconciliationInput["comparisonMode"] | null;
     lastSnapshotSourceLabel: string | null;
     trustworthySnapshotCount: number;
