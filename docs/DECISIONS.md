@@ -324,6 +324,22 @@ Consequence:
 - `baseline:export` can consume that runtime capture file automatically when no manual baseline file is supplied
 - order and fill sections can now be populated from existing runtime state where available
 - internal account/balance baseline remains explicitly unavailable until a trustworthy runtime account source exists
+
+### Add a future live-submission layer that stays deny-only until a later explicit enablement phase
+
+Reason:
+
+- the system needs a clean boundary for future live order submission before any real venue-writing code is considered
+- live submission safety checks must be explicit, machine-readable, and visible in logs before any venue integration exists
+- this phase must stay safe to run locally and under tests
+
+Consequence:
+
+- live submission request/guard/result types now live in a separate `src/live/liveSubmission.ts` module
+- `future_live_clob` can now construct live-style leg submission requests and evaluate explicit guards
+- guard posture is deny-by-default and includes execution enablement, kill switch, mode selection, allowlists, max size, and environment confirmation
+- even a fully passing guard result still ends in a structured deny because live submission is not implemented in this phase
+- a manual `live:submit-probe` command now exercises the denied path without placing orders
 - reconciliation still never fabricates internal identifiers or internal balances
 - normalization results record warning/reject information before any balance comparison happens
 - balance reconciliation summaries now include account-ingestion provenance counts, malformed reject counts, stale-input counts, and normalization warning counts

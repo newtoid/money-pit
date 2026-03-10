@@ -136,10 +136,15 @@
   - automatic reuse of runtime capture by `baseline:export` when present
   - order/fill sections populated from execution-adapter lifecycle state where available
   - unavailable runtime account state reported explicitly instead of fabricated
+- [x] Add live-order submission scaffolding without enabling trading:
+  - explicit live submission request/guard/result types
+  - deny-by-default guard layer with machine-readable reason codes
+  - future-live adapter path that constructs denied submission attempts
+  - safe `live:submit-probe` entrypoint for local guard validation
 
 ## Next Phase
 
-- [ ] Add real internal account/balance runtime capture once a trustworthy internal ledger/account source exists.
+- [ ] Add authenticated read-only venue state into a future live-submission readiness review path before any real submit implementation is considered.
 
 ## Later
 

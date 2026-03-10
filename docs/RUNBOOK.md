@@ -203,6 +203,31 @@ And then reconcile with explicit split baselines:
 npm run venue:reconcile -- --order-baseline data/baselines/internal-baseline.orders.json --account-baseline data/baselines/internal-baseline.account.json
 ```
 
+## Live Submission Probe
+
+Run the deny-by-default live submission probe:
+
+```bash
+npm run live:submit-probe
+```
+
+Live-submission env vars:
+
+- `LIVE_SUBMISSION_MODE`
+- `LIVE_SUBMISSION_ALLOWLIST_MARKETS`
+- `LIVE_SUBMISSION_ALLOWLIST_ASSETS`
+- `LIVE_SUBMISSION_MAX_ORDER_SIZE`
+- `LIVE_SUBMISSION_REQUIRED_CONFIRMATION`
+- `LIVE_SUBMISSION_CONFIRMATION`
+
+Important:
+
+- this path is still non-executing
+- no real submit or cancel call can succeed in this phase
+- `LIVE_EXECUTION_ENABLED=false` and `EXECUTION_KILL_SWITCH=true` remain the safe defaults
+- even if all guard checks pass, the probe still returns `live_submission_not_implemented_in_phase`
+- the probe is only for validating guard posture and denied-result reporting
+
 ## Important Operational Notes
 
 - Replay assumes deterministic strategy evaluation over recorded data.
@@ -286,10 +311,22 @@ npm run venue:reconcile -- --order-baseline data/baselines/internal-baseline.ord
   - `EXECUTION_MODE`
   - `LIVE_EXECUTION_ENABLED`
   - `EXECUTION_KILL_SWITCH`
+- Future live-submission guard env vars:
+  - `LIVE_SUBMISSION_MODE`
+  - `LIVE_SUBMISSION_ALLOWLIST_MARKETS`
+  - `LIVE_SUBMISSION_ALLOWLIST_ASSETS`
+  - `LIVE_SUBMISSION_MAX_ORDER_SIZE`
+  - `LIVE_SUBMISSION_REQUIRED_CONFIRMATION`
+  - `LIVE_SUBMISSION_CONFIRMATION`
 - Important:
   - no adapter in this phase talks to authenticated trading endpoints
   - no code path in this phase can submit a real order
   - adapter summaries are for boundary visibility only, not exchange reconciliation
+  - `future_live_clob` now records deny-only live-submission summaries:
+    - attempts constructed
+    - denied submission count
+    - guard failure counts
+    - configured safety posture
 
 ## Order Lifecycle Model
 
