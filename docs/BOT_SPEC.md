@@ -64,6 +64,7 @@ This repo currently implements:
 - explicit external-state reconciliation accounting refinements behind matching
 - explicit internal external-identifier carriage plus richer synthetic reconciliation fixtures behind reconciliation
 - explicit external account / balance reconciliation scaffolding behind the adapter boundary
+- explicit raw external account snapshot ingestion / normalization scaffolding behind balance reconciliation
 
 Not yet implemented in this phase:
 
@@ -174,6 +175,15 @@ Not yet implemented in this phase:
   - current comparison fields are available balance, reserved balance, and total balance
   - missing external asset balances, unexpected external asset balances, stale account snapshots, and insufficient comparison coverage are surfaced explicitly
   - balance reconciliation remains read-only and does not mutate internal portfolio/accounting state
+- Raw external account snapshot ingestion is now scaffolded separately and remains non-live:
+  - it normalizes raw external-style account/balance payloads into the balance reconciliation snapshot types
+  - it preserves provenance, source labels, freshness metadata, and raw source metadata
+  - it warns or rejects malformed inputs explicitly
+  - it never invents missing balance values or reserved-balance keys
+  - current stable account-snapshot provenance values are:
+    - `synthetic_test_account_snapshot`
+    - `replay_generated_account_snapshot`
+    - `future_external_account_api_shape`
 - Synthetic reconciliation fixture coverage is now richer:
   - full external-id matches
   - partial-id matches and partial-id insufficiency
@@ -183,3 +193,4 @@ Not yet implemented in this phase:
   - differing fill/event shapes for partial fills
   - status progression disagreement with otherwise comparable quantities
   - account/balance fixtures for matching balances, mismatched balances, missing assets, unexpected assets, partial coverage, and stale snapshots
+  - raw account-ingestion fixtures for valid complete inputs, valid partial inputs, malformed inputs, stale inputs, and missing key balance fields

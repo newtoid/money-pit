@@ -246,6 +246,22 @@ Consequence:
 - missing asset rows, unexpected external asset rows, stale snapshots, and insufficient coverage are surfaced as machine-readable issues
 - reconciliation does not mutate internal portfolio/accounting state
 
+### Keep raw external account snapshot ingestion separate from balance reconciliation
+
+Reason:
+
+- malformed raw account payload handling is a normalization concern, not a balance comparison concern
+- provenance, staleness-at-ingestion, and missing-key warnings need to stay visible even when no reconciliation is run
+- future venue account API shapes may drift independently from the balance comparison model
+
+Consequence:
+
+- raw account ingestion now lives in `src/live/accountSnapshotIngestion.ts`
+- adapters expose a separate non-live `ingestExternalAccountSnapshot(...)` hook
+- normalization results record warning/reject information before any balance comparison happens
+- balance reconciliation summaries now include account-ingestion provenance counts, malformed reject counts, stale-input counts, and normalization warning counts
+- no missing balance values or reserved-balance keys are invented during normalization
+
 ### Add an explicit execution-attempt state machine before live execution scaffolding
 
 Reason:

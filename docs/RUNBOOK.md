@@ -271,6 +271,11 @@ tsx scripts/doctor.ts
     - matched vs mismatched asset balances
     - stale account snapshot warnings
     - provenance/source counts
+    - ingested raw account snapshots by provenance
+    - malformed account snapshot reject counts
+    - stale account snapshot input counts
+    - account snapshot normalization warning counts
+    - account snapshots missing key balance fields
 
 ## Internal External-Identifier Scaffolding
 
@@ -322,6 +327,43 @@ tsx scripts/doctor.ts
   - no venue-truth account view exists
   - missing balance values are not invented
   - missing coverage is reported explicitly rather than guessed through
+
+## Raw External Account Snapshot Ingestion
+
+- Raw account snapshot ingestion lives separately from balance reconciliation.
+- It accepts raw external-style inputs for:
+  - account snapshot metadata
+  - asset balances
+  - reserved balances
+- It normalizes those inputs into the `ExternalAccountSnapshot` type used by balance reconciliation.
+- Stable raw account snapshot provenance values currently include:
+  - `synthetic_test_account_snapshot`
+  - `replay_generated_account_snapshot`
+  - `future_external_account_api_shape`
+- Current warning/reject behavior includes:
+  - reject if `sourceLabel` is missing
+  - reject if `capturedAtMs` is invalid
+  - reject if both asset and reserved-balance payloads are missing
+  - warn on missing asset symbols
+  - warn on missing reserved-balance keys
+  - warn on missing key balance fields
+  - warn on invalid numeric fields
+  - warn when the snapshot was already stale at ingestion time
+- Current adapter behavior:
+  - `dry_run_stub`
+    - normalizes raw account snapshots
+    - records noop balance reconciliation only
+  - `replay_simulated`
+    - normalizes raw account snapshots
+    - stores normalization reporting without forcing a balance comparison
+  - `future_live_clob`
+    - normalizes raw account snapshots
+    - records noop balance reconciliation only
+- Important:
+  - normalization is still fully non-live
+  - no authenticated account source exists
+  - no missing values are fabricated silently
+  - warning/reject reporting is separate from balance mismatch reporting
 
 ## Synthetic Reconciliation Fixtures
 

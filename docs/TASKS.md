@@ -111,10 +111,15 @@
   - read-only balance comparison layer
   - machine-readable balance issue types
   - synthetic account/balance fixtures and adapter summary wiring
+- [x] Add raw external account snapshot ingestion / normalization scaffolding:
+  - explicit raw account/asset/reserved-balance ingestion shapes
+  - normalization into balance reconciliation snapshot types
+  - adapter hook for raw account snapshot ingestion
+  - normalization warning/reject reporting by provenance and warning type
 
 ## Next Phase
 
-- [ ] Add raw external account snapshot ingestion / normalization scaffolding on top of the current non-live balance reconciliation layer.
+- [ ] Add richer synthetic account snapshot reconciliation scenarios that exercise reserved-balance semantics more explicitly, still without authenticated venue access.
 
 ## Later
 
