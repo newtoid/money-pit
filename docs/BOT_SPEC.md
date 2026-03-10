@@ -60,6 +60,7 @@ This repo currently implements:
 - explicit non-live order lifecycle scaffolding behind the execution adapter boundary
 - explicit external reconciliation model scaffolding behind the adapter boundary
 - explicit external identifier and snapshot-ingestion scaffolding behind the reconciliation model
+- explicit partial-identifier matching-rules scaffolding behind reconciliation
 
 Not yet implemented in this phase:
 
@@ -145,3 +146,8 @@ Not yet implemented in this phase:
     - `future_external_api_shape`
   - malformed or stale ingested snapshots are surfaced through explicit warnings or reject counts
   - no missing external ids are invented silently
+- Partial-identifier reconciliation matching is now explicit:
+  - matching rules live in a separate deterministic layer
+  - precedence is explicit and machine-readable
+  - ambiguous or conflicting matches remain unresolved instead of being guessed away
+  - match outcomes and unmatched reasons are reported separately from normalization warnings
