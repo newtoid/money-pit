@@ -258,6 +258,25 @@ Consequence:
 
 - raw account ingestion now lives in `src/live/accountSnapshotIngestion.ts`
 - adapters expose a separate non-live `ingestExternalAccountSnapshot(...)` hook
+
+### Add authenticated venue connectivity only through a dedicated read-only layer with hard safety gates
+
+Reason:
+
+- this is the first phase allowed to touch real venue connectivity
+- the system still must not be able to submit or cancel orders
+- real fetched data is useful for testing normalization and reconciliation inputs before any live execution work
+
+Consequence:
+
+- authenticated venue connectivity now lives in a dedicated read-only module
+- the read-only path only fetches open orders, trades, and balance/allowance data
+- the safety contract is explicit:
+  - `LIVE_EXECUTION_ENABLED` must remain `false`
+  - `EXECUTION_KILL_SWITCH` must remain `true`
+- fetched venue data is passed through the existing normalization layers instead of mutating internal truth directly
+- real-data provenance values are distinct from synthetic fixture provenance values
+- no submit/cancel path is added in this phase
 - normalization results record warning/reject information before any balance comparison happens
 - balance reconciliation summaries now include account-ingestion provenance counts, malformed reject counts, stale-input counts, and normalization warning counts
 - no missing balance values or reserved-balance keys are invented during normalization

@@ -65,6 +65,7 @@ This repo currently implements:
 - explicit internal external-identifier carriage plus richer synthetic reconciliation fixtures behind reconciliation
 - explicit external account / balance reconciliation scaffolding behind the adapter boundary
 - explicit raw external account snapshot ingestion / normalization scaffolding behind balance reconciliation
+- explicit authenticated read-only venue integration scaffolding that fetches real venue data into existing normalization layers without enabling trading
 
 Not yet implemented in this phase:
 
@@ -72,6 +73,7 @@ Not yet implemented in this phase:
 - real order submission
 - authenticated exchange reconciliation
 - metrics pipeline
+- real order submission
 
 ## Known Uncertainties
 
@@ -184,6 +186,18 @@ Not yet implemented in this phase:
     - `synthetic_test_account_snapshot`
     - `replay_generated_account_snapshot`
     - `future_external_account_api_shape`
+- Authenticated read-only venue integration is now scaffolded and remains strictly non-trading:
+  - it lives in a dedicated read-only integration layer and does not share submit/cancel paths
+  - it may use authenticated CLOB reads for open orders, trades, and balance/allowance data only
+  - strict safety gates require `LIVE_EXECUTION_ENABLED=false` and `EXECUTION_KILL_SWITCH=true`
+  - fetched order/trade snapshots are normalized through the existing external snapshot ingestion path
+  - fetched account balance data is normalized through the existing account snapshot ingestion path
+  - current stable real-data provenance values are:
+    - `real_readonly_clob_open_orders_trades_api`
+    - `real_readonly_clob_balance_allowance_api`
+  - current balance reads expose `balance` and `allowance`, but not authoritative reserved/total balance fields
+  - missing reserved/total values remain explicit warnings instead of being invented
+  - fetched data does not mutate internal accounting, order state, or portfolio truth
 - Synthetic reconciliation fixture coverage is now richer:
   - full external-id matches
   - partial-id matches and partial-id insufficiency
