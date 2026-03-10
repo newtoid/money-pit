@@ -271,12 +271,14 @@ export type ExternalFillSnapshot = {
 export type ExternalSnapshotProvenance =
     | "synthetic_test_snapshot"
     | "replay_generated_snapshot"
-    | "future_external_api_shape";
+    | "future_external_api_shape"
+    | "real_readonly_clob_open_orders_trades_api";
 
 export type ExternalAccountSnapshotProvenance =
     | "synthetic_test_account_snapshot"
     | "replay_generated_account_snapshot"
-    | "future_external_account_api_shape";
+    | "future_external_account_api_shape"
+    | "real_readonly_clob_balance_allowance_api";
 
 export type ExternalExecutionSnapshot = {
     provenance: ExternalSnapshotProvenance;
