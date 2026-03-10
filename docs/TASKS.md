@@ -84,10 +84,15 @@
   - noop reconciliation path for non-live stub adapters
   - synthetic external snapshot comparison path for replay/test adapters
   - reconciliation issue summaries for mismatches, missing orders, and stale snapshots
+- [x] Add external identifier and snapshot-ingestion scaffolding:
+  - optional external identifier fields for future venue-facing records
+  - explicit raw ingestion shapes for orders, fills, and execution snapshots
+  - normalization into reconciliation-ready snapshot types
+  - provenance-based ingestion reporting and normalization warning counts
 
 ## Next Phase
 
-- [ ] Add exchange-side identifier and venue snapshot ingestion scaffolding on top of the non-live reconciliation model.
+- [ ] Add venue-shaped reconciliation matching refinements on top of the non-live snapshot-ingestion model.
 
 ## Later
 
