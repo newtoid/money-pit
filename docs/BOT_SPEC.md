@@ -68,7 +68,8 @@ This repo currently implements:
 - explicit authenticated read-only venue integration scaffolding that fetches real venue data into existing normalization layers without enabling trading
 - explicit real-data reconciliation probe/orchestration that runs authenticated read-only snapshots through existing normalization and reconciliation layers on demand
 - explicit internal baseline export/capture scaffolding so reconciliation probes can consume repeatable internal baseline files without inventing internal truth
- - explicit runtime-state baseline capture hooks so baseline export can populate order/fill baselines from existing internal runtime state where that state already exists
+- explicit runtime-state baseline capture hooks so baseline export can populate order/fill baselines from existing internal runtime state where that state already exists
+- explicit live-order submission scaffolding with deny-by-default guards and a safe probe path
 
 Not yet implemented in this phase:
 
@@ -131,6 +132,32 @@ Not yet implemented in this phase:
   - `dry_run_stub` and `replay_simulated` adapters are implemented as non-live scaffolding only
   - `future_live_clob` is intentionally not implemented and must deny submissions
   - no code path in this phase submits a real order
+- Live submission scaffolding is now explicit and remains non-executing:
+  - it lives in a dedicated live-submission layer under `src/live/`
+  - it defines explicit live submission request, guard, ack, result, and summary types
+  - the future-live adapter can now construct live-style leg requests and evaluate machine-readable guards
+  - required guard categories currently include:
+    - `LIVE_EXECUTION_ENABLED=true`
+    - `EXECUTION_KILL_SWITCH=false`
+    - explicit live submission mode selection
+    - explicit allowlisted market/asset checks when configured
+    - explicit max order size cap
+    - explicit environment confirmation when configured
+  - even when every guard passes, the effective result in this phase is still deny-only with `live_submission_not_implemented_in_phase`
+  - current stable live-submission modes are:
+    - `disabled`
+    - `future_live_clob_guarded`
+  - current stable live-submission guard reasons include:
+    - `live_execution_disabled`
+    - `execution_kill_switch_enabled`
+    - `live_submission_mode_not_selected`
+    - `market_not_allowlisted`
+    - `asset_not_allowlisted`
+    - `order_size_above_cap`
+    - `max_order_size_cap_missing`
+    - `environment_confirmation_missing`
+    - `live_submission_not_implemented_in_phase`
+  - a safe manual probe now exists to exercise the denied path without placing orders
 - Order lifecycle scaffolding is now explicit and separate from execution attempts:
   - execution attempts model the strategy-level arb attempt lifecycle
   - order lifecycle records model per-leg order objects that would sit behind the adapter boundary
