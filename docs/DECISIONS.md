@@ -277,6 +277,22 @@ Consequence:
 - fetched venue data is passed through the existing normalization layers instead of mutating internal truth directly
 - real-data provenance values are distinct from synthetic fixture provenance values
 - no submit/cancel path is added in this phase
+
+### Orchestrate real-data reconciliation as an on-demand probe with optional internal baselines
+
+Reason:
+
+- authenticated read-only fetches are useful only if they can be pushed through the existing comparison layers
+- the current reconciliation/accounting layers require explicit internal comparison views
+- guessing internal baselines from live fetched venue data would blur external truth and internal truth
+
+Consequence:
+
+- real-data reconciliation now lives in a separate orchestration path, not inside strategy or execution code
+- the probe reuses existing normalization and reconciliation modules instead of bypassing them
+- internal order/account baselines are explicit optional JSON inputs
+- when baselines are missing, the probe reports partial coverage and unexpected external state instead of fabricating matches
+- the probe may write a structured JSON report, but it does not mutate internal state
 - normalization results record warning/reject information before any balance comparison happens
 - balance reconciliation summaries now include account-ingestion provenance counts, malformed reject counts, stale-input counts, and normalization warning counts
 - no missing balance values or reserved-balance keys are invented during normalization
