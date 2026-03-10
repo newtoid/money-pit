@@ -126,10 +126,15 @@
   - reuse of existing normalization, reconciliation, accounting-comparison, and balance-comparison layers
   - optional internal baseline JSON inputs for order/account comparison
   - structured JSON output plus explicit partial-coverage reporting
+- [x] Add internal baseline export/capture scaffolding:
+  - explicit combined/split internal baseline JSON format
+  - manual `baseline:export` entrypoint
+  - missing-section reporting for empty baselines
+  - easier `venue:reconcile` baseline input handling
 
 ## Next Phase
 
-- [ ] Add internal baseline export/capture scaffolding so real-data reconciliation can compare against repeatable internal snapshots without hand-written JSON fixtures.
+- [ ] Add real runtime-state capture hooks so baseline export can populate non-empty internal order/account baselines automatically instead of exporting empty scaffolds by default.
 
 ## Later
 

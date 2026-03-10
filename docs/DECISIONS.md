@@ -293,6 +293,22 @@ Consequence:
 - internal order/account baselines are explicit optional JSON inputs
 - when baselines are missing, the probe reports partial coverage and unexpected external state instead of fabricating matches
 - the probe may write a structured JSON report, but it does not mutate internal state
+
+### Export internal baselines as explicit files instead of inferring them inside reconciliation
+
+Reason:
+
+- the reconciliation probe needs repeatable internal comparison inputs
+- internal and external truth must remain clearly separated
+- the system does not yet have a persistent runtime baseline source that can be trusted automatically
+
+Consequence:
+
+- internal baselines now have an explicit combined export format plus split order/account files
+- `baseline:export` writes machine-readable baseline files with provenance and capture timestamp
+- if no internal inputs are available, the exporter writes an explicit empty baseline and reports missing sections
+- `venue:reconcile` now accepts `--baseline`, `--order-baseline`, and `--account-baseline`
+- reconciliation still never fabricates internal identifiers or internal balances
 - normalization results record warning/reject information before any balance comparison happens
 - balance reconciliation summaries now include account-ingestion provenance counts, malformed reject counts, stale-input counts, and normalization warning counts
 - no missing balance values or reserved-balance keys are invented during normalization
