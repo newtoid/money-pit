@@ -63,6 +63,7 @@ function main() {
     console.log(`Execution damage: ${JSON.stringify(report.executionDamage)}`);
     console.log(`Stranded damage records: ${report.strandedDamageRecords.length}`);
     console.log(`Execution state summary: ${JSON.stringify(report.executionStateSummary)}`);
+    console.log(`Execution adapter: ${JSON.stringify(report.executionAdapter)}`);
     console.log(`Partial fill damage: ${JSON.stringify(report.partialFillDamageReport)}`);
 }
 

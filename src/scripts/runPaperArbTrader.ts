@@ -8,12 +8,18 @@ import { ExecutionSimulator, buildExecutionSimConfig } from "../arbScanner/execu
 import { PaperTrader } from "../arbScanner/paperTrader";
 import { SettlementSource } from "../core/settlementSource";
 import { ResolutionPoller } from "../arbScanner/resolutionPoller";
+import { createExecutionAdapter } from "../live/createExecutionAdapter";
 
 async function main() {
     const config = loadArbScannerConfig();
     const settlementSource = new SettlementSource({
         mode: "placeholder_end_time_full_set_assumption",
         allowPlaceholderFallback: config.settlementAllowPlaceholderFallback,
+    });
+    const executionAdapter = createExecutionAdapter({
+        executionMode: config.executionMode,
+        liveExecutionEnabled: config.liveExecutionEnabled,
+        executionKillSwitch: config.executionKillSwitch,
     });
     logger.info(
         {
@@ -42,6 +48,9 @@ async function main() {
             settlementAllowPlaceholderFallback: config.settlementAllowPlaceholderFallback,
             resolutionPollingEnabled: config.resolutionPollingEnabled,
             resolutionPollIntervalMs: config.resolutionPollIntervalMs,
+            executionMode: config.executionMode,
+            liveExecutionEnabled: config.liveExecutionEnabled,
+            executionKillSwitch: config.executionKillSwitch,
         },
         "Starting paper arbitrage trader",
     );
@@ -91,6 +100,7 @@ async function main() {
         recorder,
         emitLogs: true,
         settlementSource,
+        executionAdapter,
     });
 
     let scanner: OpportunityScanner | null = null;
@@ -152,6 +162,7 @@ async function main() {
                 executionDamage: state.executionDamage,
                 executionStateSummary: state.executionStateSummary,
                 strandedDamageRecords: state.strandedDamageRecords.length,
+                executionAdapter: executionAdapter.reconcileExecutionState(),
                 positionsResolvedByExplicitResolutionEvent: state.positionsResolvedByExplicitResolutionEvent,
                 positionsResolvedByPlaceholderAssumption: state.positionsResolvedByPlaceholderAssumption,
                 unresolvedPositions: state.unresolvedPositions,

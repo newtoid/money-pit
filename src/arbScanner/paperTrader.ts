@@ -9,12 +9,15 @@ import { dayBucketEndMs, dayBucketStartMs, parseUtcOffsetToMinutes } from "../ut
 import { SettlementSource } from "../core/settlementSource";
 import { ExecutionAttemptRecord, ExecutionAttemptStateMachine } from "../core/executionStateMachine";
 import { StrandedDamageTracker } from "../core/strandedDamage";
+import { ExecutionAdapter } from "../live/executionAdapter";
+import { buildExecutionRequest } from "../live/buildExecutionRequest";
 
 type PaperTraderOpts = {
     maxTradesPerMarket: number;
     recorder?: ArbRecorder;
     emitLogs?: boolean;
     settlementSource: SettlementSource;
+    executionAdapter?: ExecutionAdapter;
 };
 
 export class PaperTrader {
@@ -190,6 +193,25 @@ export class PaperTrader {
                 attempt.failLegA(opportunity.observedAt, "leg_a_failed_other");
                 this.recordExecutionAttempt(attempt.snapshot());
                 return { skipped: true, reason: "risk_denied", risk };
+            }
+        }
+        if (this.opts.executionAdapter) {
+            const executionRequest = buildExecutionRequest({
+                executionAttemptId: attempt.snapshot().id,
+                source: "paper",
+                opportunity,
+                requestedSize: this.config.tradeSize,
+                createdAtMs: opportunity.observedAt,
+            });
+            const submitResult = this.opts.executionAdapter.submitExecutionAttempt(executionRequest);
+            if (this.opts.emitLogs !== false) {
+                logger.info(
+                    {
+                        executionRequest,
+                        executionSubmitResult: submitResult,
+                    },
+                    "Created paper execution request at adapter boundary",
+                );
             }
         }
         if (recordFill) this.opts.recorder?.recordSimFill(fill);

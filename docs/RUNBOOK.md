@@ -121,6 +121,86 @@ tsx scripts/doctor.ts
   - no recovery or hedge-out behavior exists yet
   - no mark-to-market exists for damage records
 
+## Execution Adapter Boundary
+
+- Execution adapters live under `src/live/`.
+- Implemented modes:
+  - `dry_run_stub`
+  - `replay_simulated`
+  - `future_live_clob`
+- Current behavior:
+  - `dry_run_stub` accepts requests and records placeholder order statuses without placing orders
+  - `replay_simulated` accepts requests as replay-scaffold events; replay engine remains fill authority
+  - `future_live_clob` is scaffold only and denies submissions
+- Safety env vars:
+  - `EXECUTION_MODE`
+  - `LIVE_EXECUTION_ENABLED`
+  - `EXECUTION_KILL_SWITCH`
+- Important:
+  - no adapter in this phase talks to authenticated trading endpoints
+  - no code path in this phase can submit a real order
+  - adapter summaries are for boundary visibility only, not exchange reconciliation
+
+## Order Lifecycle Model
+
+- Order lifecycle lives under `src/live/orderLifecycle.ts`.
+- It is separate from the execution-attempt state machine:
+  - execution attempts track the high-level arb attempt lifecycle
+  - order lifecycle tracks per-leg order objects that would sit behind an adapter
+- Order lifecycle states are:
+  - `created`
+  - `submit_requested`
+  - `submit_denied`
+  - `submitted`
+  - `acknowledged`
+  - `open`
+  - `partially_filled`
+  - `filled`
+  - `cancel_requested`
+  - `cancelled`
+  - `expired`
+  - `rejected`
+  - `reconciliation_pending`
+  - `reconciled`
+- Stable transition reasons currently include:
+  - `order_created_from_execution_request`
+  - `submit_requested_by_adapter`
+  - `submit_denied_execution_kill_switch`
+  - `submit_denied_live_disabled`
+  - `submit_denied_live_not_implemented`
+  - `submitted_by_dry_run_stub`
+  - `submitted_by_replay_simulated`
+  - `acknowledged_by_stub`
+  - `opened_by_stub`
+  - `partially_filled_by_replay_simulation`
+  - `filled_by_replay_simulation`
+  - `cancel_requested_by_adapter`
+  - `cancelled_by_stub`
+  - `expired_by_stub_timeout`
+  - `rejected_by_stub`
+  - `reconciliation_requested`
+  - `reconciled_by_stub`
+- Current adapter behavior:
+  - `dry_run_stub`
+    - records placeholder submit/open/reconciliation flow
+    - never submits anything externally
+  - `replay_simulated`
+    - records placeholder order submission/open states
+    - consumes replay-generated simulated fills/rejects/expiries into order lifecycle records
+    - replay remains the fill authority
+  - `future_live_clob`
+    - always denies submission
+- Order lifecycle summaries currently include:
+  - orders by terminal state
+  - transition reason counts
+  - submit denied count
+  - reconciliation pending count
+  - average order lifetime
+- Important:
+  - this is still not exchange reconciliation
+  - no exchange order ids or authenticated order queries exist yet
+  - no retry logic exists yet
+
 ## Execution Attempt Lifecycle
 
 - Replay and paper both emit execution-attempt records.
@@ -224,3 +304,6 @@ tsx scripts/doctor.ts
 - `MAX_QUEUE_PENALTY_LEVELS`
 - `PARTIAL_FILL_MODE`
 - `SIM_PARTIAL_FILL_PROBABILITY`
+- `EXECUTION_MODE`
+- `LIVE_EXECUTION_ENABLED`
+- `EXECUTION_KILL_SWITCH`

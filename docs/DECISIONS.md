@@ -248,3 +248,33 @@ Consequence:
 - replay resolves open damage into a summarized loss bucket at replay lifecycle end
 - paper can optionally expire old damage records via `STRANDED_DAMAGE_REPORTING_WINDOW_MS`
 - no hedge-out or recovery logic exists yet
+
+### Add a future-facing execution adapter boundary before any live submission code
+
+Reason:
+
+- strategy, risk, replay, and portfolio logic need a clean seam before any real order code exists
+- the project needs explicit request/result/status objects before wiring exchange APIs
+- live behavior must remain impossible in this phase
+
+Consequence:
+
+- execution request/result/status objects now define the boundary between strategy code and any future exchange integration
+- `dry_run_stub` and `replay_simulated` can be exercised safely in replay and paper without any authenticated trading calls
+- `future_live_clob` stays deny-only until a later phase
+
+### Keep order lifecycle separate from execution-attempt lifecycle
+
+Reason:
+
+- an arb execution attempt is a strategy-level concept, while per-leg order objects are a lower-level adapter concern
+- future live trading will need explicit order histories, correlation ids, and reconciliation state without duplicating strategy state
+- separating the two models now keeps replay/paper accounting readable and prevents live-facing concerns from smearing across portfolio or risk code
+
+Consequence:
+
+- order lifecycle now lives in `src/live/orderLifecycle.ts`
+- stable order states and transition reasons are machine-readable and adapter-facing
+- dry-run and replay-simulated adapters both populate order lifecycle records without placing orders
+- replay remains the fill authority; the replay-simulated adapter only mirrors replay outcomes into order lifecycle records
+- order lifecycle summaries now report terminal-state counts, transition-reason counts, submit-denied counts, reconciliation-pending counts, and average order lifetime

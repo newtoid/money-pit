@@ -68,15 +68,23 @@
   - replay end-of-session resolution for damage records
   - optional paper reporting-window expiry
   - open/resolved/outstanding exposure reporting
+- [x] Add live-execution scaffolding only:
+  - explicit execution adapter interface
+  - dry-run stub adapter
+  - replay-compatible scaffold adapter
+  - unsupported future live mode that stays inert
+  - adapter-boundary logging and summaries
+- [x] Add non-live order lifecycle scaffolding behind the execution adapter boundary:
+  - explicit per-leg order lifecycle states and transition reasons
+  - order lifecycle store with status history and timestamps
+  - dry-run / replay-simulated / deny-only adapter wiring
+  - order lifecycle summaries for terminal states, transition reasons, and reconciliation-pending counts
 
 ## Next Phase
 
-- [ ] Improve replay realism further:
-  - queue-position / fill-priority realism refinement
-  - fill-priority assumptions under sparse ladder updates
+- [ ] Add exchange reconciliation scaffolding on top of the non-live order lifecycle boundary.
 
 ## Later
 
-- [ ] Add live execution abstraction using the execution-attempt model.
 - [ ] Add reconciliation hooks.
 - [ ] Add compact summary metrics and alarms.

@@ -10,6 +10,9 @@ import { BinaryMarket, PaperTraderState, RecordedEvent, ReplayExecutionOutcome, 
 import { SettlementSource } from "../core/settlementSource";
 import { ExecutionAttemptRecord, ExecutionAttemptStateMachine, ExecutionTransitionReason } from "../core/executionStateMachine";
 import { StrandedDamageTracker } from "../core/strandedDamage";
+import { createExecutionAdapter } from "../live/createExecutionAdapter";
+import { buildExecutionRequest } from "../live/buildExecutionRequest";
+import { ReconciliationSnapshot } from "../live/types";
 
 export type ReplayReport = {
     tradeCount: number;
@@ -90,6 +93,7 @@ export type ReplayReport = {
     executionStateSummary: PaperTraderState["executionStateSummary"];
     executionAttempts: ExecutionAttemptRecord[];
     strandedDamageRecords: PaperTraderState["strandedDamageRecords"];
+    executionAdapter: ReconciliationSnapshot;
     partialFillDamageReport: {
         partialFills: number;
         pnlLostToPartial: number;
@@ -124,6 +128,51 @@ function parseRecordedEvents(filePath: string): RecordedEvent[] {
         .map((line) => line.trim())
         .filter(Boolean)
         .map((line) => JSON.parse(line) as RecordedEvent);
+}
+
+function buildReplayOrderLifecycleUpdate(attempt: ExecutionAttemptRecord, outcome: ReplayExecutionOutcome) {
+    const mapLeg = (side: "yes" | "no", leg: ReplayLegExecution | null) => {
+        if (!leg) {
+            return {
+                legId: `${attempt.id}-${side}`,
+                terminalState: "rejected" as const,
+                reason: "rejected_by_stub" as const,
+            };
+        }
+        if (leg.filledSize >= leg.requestedSize) {
+            return {
+                legId: `${attempt.id}-${side}`,
+                terminalState: "filled" as const,
+                reason: "filled_by_replay_simulation" as const,
+                filledSize: leg.filledSize,
+                averageFillPrice: leg.averageFillPrice ?? undefined,
+            };
+        }
+        if (leg.filledSize > 0) {
+            return {
+                legId: `${attempt.id}-${side}`,
+                terminalState: "partially_filled" as const,
+                reason: "partially_filled_by_replay_simulation" as const,
+                filledSize: leg.filledSize,
+                averageFillPrice: leg.averageFillPrice ?? undefined,
+            };
+        }
+        return {
+            legId: `${attempt.id}-${side}`,
+            terminalState: leg.reason === "stale_orderbook" ? "expired" as const : "rejected" as const,
+            reason: leg.reason === "stale_orderbook" ? "expired_by_stub_timeout" as const : "rejected_by_stub" as const,
+        };
+    };
+    return {
+        executionAttemptId: attempt.id,
+        ts: outcome.legBAttemptedAt ?? outcome.legAAttemptedAt,
+        legUpdates: [
+            mapLeg("yes", outcome.legA.side === "yes" ? outcome.legA : outcome.legB),
+            mapLeg("no", outcome.legA.side === "no" ? outcome.legA : outcome.legB),
+        ],
+        reconciliationPending: true,
+        reconcileNow: true,
+    };
 }
 
 function summarizeExecutionAttempts(attempts: ReplayAttemptWithOutcome[]): PaperTraderState["executionStateSummary"] {
@@ -199,6 +248,11 @@ export function runReplay(filePath: string, config: ArbScannerConfig): ReplayRep
     }
 
     const simulator = new ExecutionSimulator(buildExecutionSimConfig(config));
+    const executionAdapter = createExecutionAdapter({
+        executionMode: config.executionMode,
+        liveExecutionEnabled: config.liveExecutionEnabled,
+        executionKillSwitch: config.executionKillSwitch,
+    });
     const settlementSource = new SettlementSource({
         mode: "prefer_explicit_recorded_resolution_event",
         allowPlaceholderFallback: config.settlementAllowPlaceholderFallback,
@@ -274,6 +328,7 @@ export function runReplay(filePath: string, config: ArbScannerConfig): ReplayRep
         executionOutcomes.push(outcome);
         const replayAttempt = pending.attempt.snapshot();
         replayAttempts.push({ attempt: replayAttempt, outcome });
+        executionAdapter.recordSimulatedOrderLifecycle(buildReplayOrderLifecycleUpdate(replayAttempt, outcome));
         replayStrandedDamage.recordExecutionOutcome({
             attempt: replayAttempt,
             outcome,
@@ -426,6 +481,13 @@ export function runReplay(filePath: string, config: ArbScannerConfig): ReplayRep
                         expiresAt: evaluation.opportunity.observedAt + config.executionLatencyMs + config.orderbookStalenessToleranceMs,
                     });
                     attempt.queue(evaluation.opportunity.observedAt);
+                    executionAdapter.submitExecutionAttempt(buildExecutionRequest({
+                        executionAttemptId: attempt.snapshot().id,
+                        source: "replay",
+                        opportunity: evaluation.opportunity,
+                        requestedSize: config.tradeSize,
+                        createdAtMs: evaluation.opportunity.observedAt,
+                    }));
                     return attempt;
                 })(),
             });
@@ -596,6 +658,7 @@ export function runReplay(filePath: string, config: ArbScannerConfig): ReplayRep
         executionStateSummary: replayExecutionStateSummary,
         executionAttempts: replayAttempts.map((item) => item.attempt),
         strandedDamageRecords: replayStrandedDamage.getRecords(),
+        executionAdapter: executionAdapter.reconcileExecutionState(),
         partialFillDamageReport: {
             partialFills,
             pnlLostToPartial,

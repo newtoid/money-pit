@@ -46,6 +46,9 @@ export type ArbScannerConfig = {
     riskMaxDailyLoss: number;
     riskDayUtcOffset: string;
     settlementAllowPlaceholderFallback: boolean;
+    executionMode: "dry_run_stub" | "replay_simulated" | "future_live_clob";
+    liveExecutionEnabled: boolean;
+    executionKillSwitch: boolean;
 };
 
 function envNumber(name: string, fallback: number): number {
@@ -155,5 +158,8 @@ export function loadArbScannerConfig(): ArbScannerConfig {
         riskMaxDailyLoss: Math.max(0, envNumber("RISK_MAX_DAILY_LOSS", 0)),
         riskDayUtcOffset: envString("RISK_DAY_UTC_OFFSET") ?? "+00:00",
         settlementAllowPlaceholderFallback: envBool("SETTLEMENT_ALLOW_PLACEHOLDER_FALLBACK", true),
+        executionMode: envEnum("EXECUTION_MODE", "dry_run_stub", ["dry_run_stub", "replay_simulated", "future_live_clob"] as const),
+        liveExecutionEnabled: envBool("LIVE_EXECUTION_ENABLED", false),
+        executionKillSwitch: envBool("EXECUTION_KILL_SWITCH", true),
     };
 }

@@ -56,12 +56,14 @@ This repo currently implements:
 - operator reporting for unresolved exposure, day rollover, and execution damage
 - explicit execution-attempt state machine shared by replay and paper paths
 - explicit stranded-damage lifecycle separate from portfolio positions
+- future live-execution abstraction boundary with non-live stub adapters only
+- explicit non-live order lifecycle scaffolding behind the execution adapter boundary
 
 Not yet implemented in this phase:
 
 - live trading
-- order state machine
-- reconciliation
+- real order submission
+- exchange reconciliation
 - metrics pipeline
 
 ## Known Uncertainties
@@ -111,3 +113,17 @@ Not yet implemented in this phase:
   - replay resolves open damage into a summarized loss bucket at replay lifecycle end
   - paper keeps damage open unless `STRANDED_DAMAGE_REPORTING_WINDOW_MS` expires it
   - stranded damage is auditable by record, type, state, age, and originating execution terminal state
+- Execution adapter boundary is now explicit:
+  - replay simulation remains the fill authority for replay
+  - paper mode still uses local simulation for fills
+  - `dry_run_stub` and `replay_simulated` adapters are implemented as non-live scaffolding only
+  - `future_live_clob` is intentionally not implemented and must deny submissions
+  - no code path in this phase submits a real order
+- Order lifecycle scaffolding is now explicit and separate from execution attempts:
+  - execution attempts model the strategy-level arb attempt lifecycle
+  - order lifecycle records model per-leg order objects that would sit behind the adapter boundary
+  - order lifecycle lives under `src/live/` and is non-live only in this phase
+  - `dry_run_stub` records placeholder submit/open/reconciliation states
+  - `replay_simulated` records placeholder order submission plus replay-driven fill/reject/expire transitions
+  - `future_live_clob` remains deny-only
+  - no exchange acknowledgement or reconciliation source exists yet
