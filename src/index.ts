@@ -20,6 +20,7 @@ export * from "./live/createExecutionAdapter";
 export * from "./live/orderLifecycle";
 export * from "./live/balanceReconciliation";
 export * from "./live/accountSnapshotIngestion";
+export * from "./live/internalBaseline";
 export * from "./live/reconciliationAccounting";
 export * from "./live/reconciliationModel";
 export * from "./live/reconciliationMatching";

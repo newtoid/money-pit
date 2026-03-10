@@ -552,6 +552,44 @@ export type InternalAccountBalanceSnapshot = {
     rawSourceMetadata: Record<string, unknown> | null;
 };
 
+export type InternalBaselineProvenance =
+    | "manual_internal_baseline_export"
+    | "empty_internal_baseline_export"
+    | "future_runtime_internal_baseline_capture";
+
+export type InternalOrderBaselineSnapshot = InternalOrderReconciliationSnapshot;
+
+export type InternalFillBaselineSnapshot = {
+    executionAttemptId: string;
+    orderId: string;
+    legId: string;
+    filledSize: number;
+    averageFillPrice: number;
+    ts: number;
+    externalIdentifiers: FillEventExternalIdentifiers;
+};
+
+export type InternalAccountBaselineSnapshot = InternalAccountBalanceSnapshot;
+
+export type InternalBaselineExport = {
+    provenance: InternalBaselineProvenance;
+    sourceLabel: string;
+    capturedAtMs: number;
+    orders: InternalOrderBaselineSnapshot[];
+    fills: InternalFillBaselineSnapshot[];
+    account: InternalAccountBaselineSnapshot | null;
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type InternalBaselineCaptureResult = {
+    exportSnapshot: InternalBaselineExport;
+    outputPath: string | null;
+    orderOutputPath: string | null;
+    accountOutputPath: string | null;
+    exportedRecordCounts: Record<string, number>;
+    missingSections: string[];
+};
+
 export type ExternalAssetBalanceSnapshot = {
     assetSymbol: string;
     availableBalance: number | null;

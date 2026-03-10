@@ -17,6 +17,7 @@ import {
     InternalOrderReconciliationSnapshot,
     ReconciliationResult,
 } from "./types";
+import { loadInternalBaseline } from "./internalBaseline";
 
 export type RealDataReconciliationLimitations = {
     orderComparison: string[];
@@ -37,96 +38,8 @@ export type RealDataReconciliationResult = {
     limitations: RealDataReconciliationLimitations;
 };
 
-type RawInternalOrderSnapshot = Partial<InternalOrderReconciliationSnapshot>;
-type RawInternalAccountSnapshot = Partial<InternalAccountBalanceSnapshot>;
-
 function incrementCounter(target: Record<string, number>, key: string, amount = 1) {
     target[key] = (target[key] ?? 0) + amount;
-}
-
-function readJsonFile<T>(filePath: string): T {
-    return JSON.parse(fs.readFileSync(path.resolve(filePath), "utf8")) as T;
-}
-
-function toNumberOrNull(value: unknown): number | null {
-    if (typeof value === "number" && Number.isFinite(value)) return value;
-    if (typeof value === "string" && value.trim().length > 0) {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-}
-
-function loadInternalOrderBaseline(filePath: string | null, capturedAtMs: number): InternalOrderReconciliationSnapshot[] {
-    if (!filePath) return [];
-    const raw = readJsonFile<unknown>(filePath);
-    if (!Array.isArray(raw)) throw new Error("internal order baseline must be a JSON array");
-    return raw.map((item, index) => {
-        const order = item as RawInternalOrderSnapshot;
-        if (!order.orderId || !order.executionAttemptId || !order.legId || !order.tokenId) {
-            throw new Error(`internal order baseline entry ${index} is missing required identifiers`);
-        }
-        return {
-            orderId: String(order.orderId),
-            executionAttemptId: String(order.executionAttemptId),
-            correlationId: typeof order.correlationId === "string" ? order.correlationId : String(order.orderId),
-            legId: String(order.legId),
-            tokenId: String(order.tokenId),
-            binarySide: order.binarySide === "no" ? "no" : "yes",
-            currentState: order.currentState ?? "open",
-            terminalState: order.terminalState ?? null,
-            comparableStatus: order.comparableStatus ?? "open",
-            createdAtMs: toNumberOrNull(order.createdAtMs) ?? capturedAtMs,
-            updatedAtMs: toNumberOrNull(order.updatedAtMs) ?? capturedAtMs,
-            filledSize: toNumberOrNull(order.filledSize) ?? 0,
-            averageFillPrice: toNumberOrNull(order.averageFillPrice),
-            fillEventCount: toNumberOrNull(order.fillEventCount) ?? 0,
-            filledNotional: toNumberOrNull(order.filledNotional),
-            partialFillObserved: order.partialFillObserved === true,
-            statusProgressionRank: toNumberOrNull(order.statusProgressionRank) ?? 0,
-            knownExternalOrderId: typeof order.knownExternalOrderId === "string" ? order.knownExternalOrderId : null,
-            knownExternalExecutionId: typeof order.knownExternalExecutionId === "string" ? order.knownExternalExecutionId : null,
-            knownExternalFillIds: Array.isArray(order.knownExternalFillIds)
-                ? order.knownExternalFillIds.filter((value): value is string => typeof value === "string")
-                : [],
-            knownVenueOrderRef: typeof order.knownVenueOrderRef === "string" ? order.knownVenueOrderRef : null,
-            externalIdentifierProvenance: order.externalIdentifierProvenance ?? "none",
-        };
-    });
-}
-
-function loadInternalAccountBaseline(filePath: string | null, capturedAtMs: number): InternalAccountBalanceSnapshot {
-    if (!filePath) {
-        return {
-            accountId: "real_data_probe_empty_internal_account",
-            sourceLabel: "real_data_probe_empty_internal_account",
-            capturedAtMs,
-            assets: [],
-            rawSourceMetadata: null,
-        };
-    }
-    const raw = readJsonFile<unknown>(filePath) as RawInternalAccountSnapshot;
-    if (!raw || typeof raw !== "object") throw new Error("internal account baseline must be a JSON object");
-    return {
-        accountId: typeof raw.accountId === "string" ? raw.accountId : "real_data_probe_internal_account",
-        sourceLabel: typeof raw.sourceLabel === "string" ? raw.sourceLabel : "real_data_probe_internal_account",
-        capturedAtMs: toNumberOrNull(raw.capturedAtMs) ?? capturedAtMs,
-        assets: Array.isArray(raw.assets)
-            ? raw.assets.map((asset, index) => {
-                if (!asset || typeof asset !== "object" || typeof asset.assetSymbol !== "string" || asset.assetSymbol.trim().length === 0) {
-                    throw new Error(`internal account baseline asset ${index} is missing assetSymbol`);
-                }
-                return {
-                    assetSymbol: asset.assetSymbol,
-                    availableBalance: toNumberOrNull(asset.availableBalance),
-                    reservedBalance: toNumberOrNull(asset.reservedBalance),
-                    totalBalance: toNumberOrNull(asset.totalBalance),
-                    rawSourceMetadata: asset.rawSourceMetadata ?? null,
-                };
-            })
-            : [],
-        rawSourceMetadata: raw.rawSourceMetadata ?? null,
-    };
 }
 
 function buildLimitations(args: {
@@ -213,8 +126,19 @@ export async function runRealDataReconciliationProbe(args: {
         now: capturedAtMs,
     });
 
-    const internalOrders = loadInternalOrderBaseline(args.probeConfig.internalOrderSnapshotPath, capturedAtMs);
-    const internalAccount = loadInternalAccountBaseline(args.probeConfig.internalAccountSnapshotPath, capturedAtMs);
+    const baseline = loadInternalBaseline({
+        baselinePath: args.probeConfig.baselinePath,
+        orderBaselinePath: args.probeConfig.internalOrderSnapshotPath,
+        accountBaselinePath: args.probeConfig.internalAccountSnapshotPath,
+    });
+    const internalOrders = baseline.orders;
+    const internalAccount = baseline.account ?? {
+        accountId: "real_data_probe_empty_internal_account",
+        sourceLabel: "real_data_probe_empty_internal_account",
+        capturedAtMs,
+        assets: [],
+        rawSourceMetadata: null,
+    };
 
     const orderReconciliation = fetch.executionSnapshotNormalization?.accepted && fetch.executionSnapshotNormalization.snapshot
         ? runExternalReconciliation({

@@ -3,9 +3,19 @@ import { loadRealDataReconciliationConfig } from "../config/realDataReconciliati
 import { runRealDataReconciliationProbe } from "../live/realDataReconciliationProbe";
 import { logger } from "../logger";
 
+function getArgValue(flag: string) {
+    const index = process.argv.indexOf(flag);
+    if (index === -1) return null;
+    return process.argv[index + 1] ?? null;
+}
+
 async function main() {
     const readOnlyVenueConfig = loadReadOnlyVenueConfig();
     const probeConfig = loadRealDataReconciliationConfig();
+    const baselinePathArg = getArgValue("--baseline");
+    const orderBaselinePathArg = getArgValue("--order-baseline");
+    const accountBaselinePathArg = getArgValue("--account-baseline");
+    const outputPathArg = getArgValue("--output");
     assertReadOnlyVenueSafety(readOnlyVenueConfig);
 
     logger.info({
@@ -16,9 +26,10 @@ async function main() {
         executionKillSwitch: readOnlyVenueConfig.executionKillSwitch,
         readOnlyVenueEnabled: readOnlyVenueConfig.enabled,
         probeEnabled: probeConfig.enabled,
-        outputPath: probeConfig.outputPath,
-        internalOrderSnapshotPath: probeConfig.internalOrderSnapshotPath,
-        internalAccountSnapshotPath: probeConfig.internalAccountSnapshotPath,
+        outputPath: outputPathArg ?? probeConfig.outputPath,
+        baselinePath: baselinePathArg ?? probeConfig.baselinePath,
+        internalOrderSnapshotPath: orderBaselinePathArg ?? probeConfig.internalOrderSnapshotPath,
+        internalAccountSnapshotPath: accountBaselinePathArg ?? probeConfig.internalAccountSnapshotPath,
     });
 
     if (!readOnlyVenueConfig.enabled || !probeConfig.enabled) {
@@ -33,7 +44,13 @@ async function main() {
 
     const result = await runRealDataReconciliationProbe({
         readOnlyVenueConfig,
-        probeConfig,
+        probeConfig: {
+            enabled: probeConfig.enabled,
+            outputPath: outputPathArg ?? probeConfig.outputPath,
+            baselinePath: baselinePathArg ?? probeConfig.baselinePath,
+            internalOrderSnapshotPath: orderBaselinePathArg ?? probeConfig.internalOrderSnapshotPath,
+            internalAccountSnapshotPath: accountBaselinePathArg ?? probeConfig.internalAccountSnapshotPath,
+        },
     });
 
     logger.info({
