@@ -146,10 +146,16 @@
   - extreme safety gates and explicit pilot mode
   - structured terminal result with venue ack/external id if returned
   - immediate reconciliation follow-up command and order baseline output
+- [x] Add one-shot post-submit read-only verification helpers:
+  - manual `live:verify-once` entrypoint only
+  - accepts pilot result plus optional baseline files
+  - fetches read-only order/trade/account data once
+  - reuses existing normalization and reconciliation layers
+  - reports explicit partial-visibility and missing-coverage limitations
 
 ## Next Phase
 
-- [ ] Add explicit post-submit read-only verification helpers around live pilot results before any broader live execution work.
+- [ ] Add explicit post-submit read-only verification result capture into repeatable reconciliation artifacts before any broader live execution work.
 
 ## Later
 

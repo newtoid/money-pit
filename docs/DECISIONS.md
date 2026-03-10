@@ -259,6 +259,22 @@ Consequence:
 - raw account ingestion now lives in `src/live/accountSnapshotIngestion.ts`
 - adapters expose a separate non-live `ingestExternalAccountSnapshot(...)` hook
 
+### Keep post-submit live pilot verification as a one-shot read-only helper
+
+Reason:
+
+- a successful pilot submission needs immediate observability without turning into a polling loop
+- the existing read-only fetch, normalization, and reconciliation layers are already the right comparison boundary
+- verification should stay manual and explicit so it cannot drift into autonomous trading behavior
+
+Consequence:
+
+- post-submit verification now lives in its own helper layer under `src/live/`
+- it accepts a pilot result file and optional internal baseline files
+- it performs one-shot read-only fetches only
+- it reuses existing normalization, order reconciliation, accounting comparison, and balance reconciliation modules
+- it reports partial coverage and missing visibility explicitly instead of hiding them behind a binary success/failure result
+
 ### Add authenticated venue connectivity only through a dedicated read-only layer with hard safety gates
 
 Reason:
