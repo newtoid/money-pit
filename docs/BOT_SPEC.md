@@ -58,12 +58,13 @@ This repo currently implements:
 - explicit stranded-damage lifecycle separate from portfolio positions
 - future live-execution abstraction boundary with non-live stub adapters only
 - explicit non-live order lifecycle scaffolding behind the execution adapter boundary
+- explicit external reconciliation model scaffolding behind the adapter boundary
 
 Not yet implemented in this phase:
 
 - live trading
 - real order submission
-- exchange reconciliation
+- authenticated exchange reconciliation
 - metrics pipeline
 
 ## Known Uncertainties
@@ -127,3 +128,10 @@ Not yet implemented in this phase:
   - `replay_simulated` records placeholder order submission plus replay-driven fill/reject/expire transitions
   - `future_live_clob` remains deny-only
   - no exchange acknowledgement or reconciliation source exists yet
+- External reconciliation scaffolding is now explicit and separate from both execution attempts and order lifecycle:
+  - reconciliation compares internal order records to external-style snapshots
+  - supported concepts now include external order snapshots, external fill snapshots, reconciliation inputs, diffs, issues, and results
+  - dry-run and deny-only adapters expose a noop reconciliation path
+  - replay-simulated adapters can consume synthetic external snapshots for test reconciliation
+  - no authenticated venue polling or exchange truth source exists yet
+  - reconciliation results must be treated as model output, not venue truth
