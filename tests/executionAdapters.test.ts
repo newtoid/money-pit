@@ -67,6 +67,7 @@ test("dry_run_stub accepts requests without creating live behavior", () => {
         capturedAtMs: 1200,
         comparisonMode: "noop_stub",
         snapshot: {
+            provenance: "synthetic_test_snapshot",
             sourceLabel: "stub-noop",
             capturedAtMs: 1200,
             maxSnapshotAgeMs: null,
@@ -78,6 +79,19 @@ test("dry_run_stub accepts requests without creating live behavior", () => {
     });
     assert.equal(reconciliation.comparisonMode, "noop_stub");
     assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.reconciliationRuns, 1);
+    const ingested = adapter.ingestExternalSnapshot({
+        provenance: "synthetic_test_snapshot",
+        sourceLabel: "dry-run-ingested",
+        capturedAtMs: 1200,
+        ingestedAtMs: 1500,
+        maxSnapshotAgeMs: 500,
+        trustworthy: false,
+        orders: [],
+        fills: [],
+        rawSourceMetadata: null,
+    });
+    assert.equal(ingested.normalization.accepted, true);
+    assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.snapshotsIngestedByProvenance.synthetic_test_snapshot, 2);
 });
 
 test("future_live_clob remains inert and clearly denied", () => {
@@ -98,6 +112,15 @@ test("future_live_clob remains inert and clearly denied", () => {
     assert.equal(result.submitStatus, "rejected_execution_kill_switch");
     assert.equal(adapter.reconcileExecutionState().totalExecutionRequests, 1);
     assert.equal(adapter.reconcileExecutionState().orderLifecycleSummary.submitDeniedCount, 2);
+    const ingested = adapter.ingestExternalSnapshot({
+        provenance: "future_external_api_shape",
+        sourceLabel: "",
+        capturedAtMs: null,
+        orders: null,
+        fills: null,
+    });
+    assert.equal(ingested.normalization.accepted, false);
+    assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.malformedSnapshotRejectCount, 1);
 });
 
 test("replay_simulated adapter records scaffold submissions", () => {

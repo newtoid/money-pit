@@ -98,6 +98,7 @@ test("reconciliation model reports matching synthetic external snapshots", () =>
             capturedAtMs: 1200,
             comparisonMode: "synthetic_external_snapshot_compare",
             snapshot: {
+                provenance: "synthetic_test_snapshot",
                 sourceLabel: "synthetic-test-snapshot",
                 capturedAtMs: 1200,
                 maxSnapshotAgeMs: 1000,
@@ -106,6 +107,8 @@ test("reconciliation model reports matching synthetic external snapshots", () =>
                     {
                         internalOrderId: "attempt-1-order-1",
                         externalOrderId: "external-1",
+                        externalExecutionId: "execution-1",
+                        venueOrderRef: "venue-ref-1",
                         executionAttemptId: "attempt-1",
                         correlationId: "attempt-1",
                         legId: "attempt-1-yes",
@@ -119,6 +122,8 @@ test("reconciliation model reports matching synthetic external snapshots", () =>
                     {
                         internalOrderId: "attempt-1-order-2",
                         externalOrderId: "external-2",
+                        externalExecutionId: "execution-2",
+                        venueOrderRef: "venue-ref-2",
                         executionAttemptId: "attempt-1",
                         correlationId: "attempt-1",
                         legId: "attempt-1-no",
@@ -153,6 +158,7 @@ test("reconciliation model reports mismatches, stale snapshots, and unexpected o
             capturedAtMs: 5000,
             comparisonMode: "synthetic_external_snapshot_compare",
             snapshot: {
+                provenance: "synthetic_test_snapshot",
                 sourceLabel: "synthetic-mismatch-snapshot",
                 capturedAtMs: 1200,
                 maxSnapshotAgeMs: 100,
@@ -161,6 +167,8 @@ test("reconciliation model reports mismatches, stale snapshots, and unexpected o
                     {
                         internalOrderId: "attempt-1-order-1",
                         externalOrderId: null,
+                        externalExecutionId: null,
+                        venueOrderRef: null,
                         executionAttemptId: "attempt-1",
                         correlationId: "attempt-1",
                         legId: "attempt-1-yes",
@@ -174,6 +182,8 @@ test("reconciliation model reports mismatches, stale snapshots, and unexpected o
                     {
                         internalOrderId: null,
                         externalOrderId: "external-extra",
+                        externalExecutionId: null,
+                        venueOrderRef: null,
                         executionAttemptId: "attempt-extra",
                         correlationId: null,
                         legId: "attempt-extra-yes",
@@ -228,6 +238,7 @@ test("replay adapter accepts synthetic reconciliation input and stores summary",
         capturedAtMs: 1200,
         comparisonMode: "synthetic_external_snapshot_compare",
         snapshot: {
+            provenance: "synthetic_test_snapshot",
             sourceLabel: "synthetic-adapter-snapshot",
             capturedAtMs: 1200,
             maxSnapshotAgeMs: 1000,
@@ -236,6 +247,8 @@ test("replay adapter accepts synthetic reconciliation input and stores summary",
                 {
                     internalOrderId: "attempt-2-order-1",
                     externalOrderId: "ext-1",
+                    externalExecutionId: "exec-1",
+                    venueOrderRef: "venue-1",
                     executionAttemptId: "attempt-2",
                     correlationId: "attempt-2",
                     legId: "attempt-2-yes",
@@ -249,6 +262,8 @@ test("replay adapter accepts synthetic reconciliation input and stores summary",
                 {
                     internalOrderId: "attempt-2-order-2",
                     externalOrderId: "ext-2",
+                    externalExecutionId: "exec-2",
+                    venueOrderRef: "venue-2",
                     executionAttemptId: "attempt-2",
                     correlationId: "attempt-2",
                     legId: "attempt-2-no",
@@ -266,4 +281,5 @@ test("replay adapter accepts synthetic reconciliation input and stores summary",
     });
     assert.equal(result.matchedOrderCount, 2);
     assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.reconciliationRuns, 1);
+    assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.snapshotsIngestedByProvenance.synthetic_test_snapshot, 1);
 });

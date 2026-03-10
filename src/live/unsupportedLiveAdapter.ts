@@ -1,7 +1,8 @@
 import { ExecutionAdapter } from "./executionAdapter";
-import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, TimeoutResult } from "./types";
+import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ExternalSnapshotExecutionIngestion, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, SnapshotIngestionResult, TimeoutResult } from "./types";
 import { OrderLifecycleStore } from "./orderLifecycle";
 import { ExternalReconciliationStore, runNoopReconciliation } from "./reconciliationModel";
+import { normalizeExternalSnapshotIngestion } from "./snapshotIngestion";
 
 export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
     readonly mode = "future_live_clob" as const;
@@ -79,6 +80,24 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
             message: "future_live_clob adapter does not consume simulated lifecycle updates",
             orderStatuses: this.orderLifecycle.getOrderSnapshotsForExecutionAttempt(update.executionAttemptId),
             fillEvents: [],
+        };
+    }
+
+    ingestExternalSnapshot(input: ExternalSnapshotExecutionIngestion): SnapshotIngestionResult {
+        const normalization = this.reconciliation.recordNormalization(normalizeExternalSnapshotIngestion(input));
+        if (!normalization.accepted || !normalization.snapshot) {
+            return {
+                normalization,
+                reconciliation: null,
+            };
+        }
+        return {
+            normalization,
+            reconciliation: this.reconcileWithExternalState({
+                capturedAtMs: normalization.snapshot.capturedAtMs,
+                comparisonMode: "noop_stub",
+                snapshot: normalization.snapshot,
+            }),
         };
     }
 
