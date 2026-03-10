@@ -41,13 +41,15 @@ export function buildLiveOrderSubmissionRequests(request: ExecutionRequest): Liv
 export function evaluateLiveSubmissionGuard(args: {
     request: LiveOrderSubmissionRequest;
     config: LiveSubmissionConfig;
+    allowedModes?: LiveSubmissionMode[];
 }): LiveSubmissionGuardResult {
     const { request, config } = args;
+    const allowedModes = args.allowedModes ?? ["future_live_clob_guarded"];
     const reasonCodes: LiveSubmissionGuardReason[] = [];
 
     if (!config.liveExecutionEnabled) reasonCodes.push("live_execution_disabled");
     if (config.executionKillSwitch) reasonCodes.push("execution_kill_switch_enabled");
-    if (config.liveSubmissionMode !== "future_live_clob_guarded") reasonCodes.push("live_submission_mode_not_selected");
+    if (!allowedModes.includes(config.liveSubmissionMode)) reasonCodes.push("live_submission_mode_not_selected");
     if (config.maxOrderSize <= 0) reasonCodes.push("max_order_size_cap_missing");
     if (config.maxOrderSize > 0 && request.size > config.maxOrderSize) reasonCodes.push("order_size_above_cap");
     if (
