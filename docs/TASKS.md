@@ -131,10 +131,15 @@
   - manual `baseline:export` entrypoint
   - missing-section reporting for empty baselines
   - easier `venue:reconcile` baseline input handling
+- [x] Add runtime-state capture hooks for internal baseline export:
+  - explicit runtime baseline capture file written from existing runtime state
+  - automatic reuse of runtime capture by `baseline:export` when present
+  - order/fill sections populated from execution-adapter lifecycle state where available
+  - unavailable runtime account state reported explicitly instead of fabricated
 
 ## Next Phase
 
-- [ ] Add real runtime-state capture hooks so baseline export can populate non-empty internal order/account baselines automatically instead of exporting empty scaffolds by default.
+- [ ] Add real internal account/balance runtime capture once a trustworthy internal ledger/account source exists.
 
 ## Later
 

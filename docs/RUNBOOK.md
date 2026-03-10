@@ -115,6 +115,7 @@ Optional probe env vars:
 - `REAL_DATA_RECONCILIATION_ENABLED`
 - `REAL_DATA_RECONCILIATION_OUTPUT_PATH`
 - `REAL_DATA_INTERNAL_BASELINE_PATH`
+- `REAL_DATA_INTERNAL_RUNTIME_CAPTURE_PATH`
 - `REAL_DATA_INTERNAL_ORDER_SNAPSHOT_PATH`
 - `REAL_DATA_INTERNAL_ACCOUNT_SNAPSHOT_PATH`
 
@@ -164,6 +165,7 @@ Current default outputs:
 Optional flags:
 
 - `--baseline <combined-input>`
+- `--runtime-capture <runtime-capture-input>`
 - `--order-input <orders-input>`
 - `--account-input <account-input>`
 - `--output <combined-output>`
@@ -173,10 +175,33 @@ Optional flags:
 
 Important:
 
-- current exporter is scaffolding, not a live runtime-state capture hook
-- with no input baselines, it writes an explicit empty baseline and reports missing sections
+- runtime capture can now be written separately from existing runtime state
+- if `data/baselines/runtime-baseline.capture.json` exists, `baseline:export` will consume it by default unless `--baseline` is supplied
+- with no manual inputs and no runtime capture file, it writes an explicit empty baseline and reports missing sections
 - it never fabricates internal identifiers or balances
 - it does not mutate strategy, portfolio, or execution state
+- current runtime capture automatically populates:
+  - order lifecycle state from the execution adapter
+  - fill events from the execution adapter
+- current runtime capture does not yet populate:
+  - internal account/balance state
+
+Runtime capture env vars for paper runs:
+
+- `RUNTIME_BASELINE_CAPTURE_ENABLED`
+- `RUNTIME_BASELINE_CAPTURE_PATH`
+
+After a paper run, you can export from captured runtime state with:
+
+```bash
+npm run baseline:export
+```
+
+And then reconcile with explicit split baselines:
+
+```bash
+npm run venue:reconcile -- --order-baseline data/baselines/internal-baseline.orders.json --account-baseline data/baselines/internal-baseline.account.json
+```
 
 ## Important Operational Notes
 
@@ -405,6 +430,8 @@ Important:
   - baseline provenance
   - capture timestamp
   - missing baseline sections
+  - section source status
+  - section source counts
   - output paths written
   - internal identifier coverage:
     - orders with external order ids
