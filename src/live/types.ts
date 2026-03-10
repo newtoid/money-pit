@@ -178,6 +178,142 @@ export type OrderLifecycleSummary = {
     averageOrderLifetimeMs: number | null;
 };
 
+export type InternalOrderReconciliationSnapshot = {
+    orderId: string;
+    executionAttemptId: string;
+    correlationId: string;
+    legId: string;
+    tokenId: string;
+    binarySide: "yes" | "no";
+    currentState: OrderLifecycleState;
+    terminalState: OrderLifecycleState | null;
+    comparableStatus: OrderStatus;
+    createdAtMs: number;
+    updatedAtMs: number;
+    filledSize: number;
+    averageFillPrice: number | null;
+};
+
+export type ExternalOrderStatus =
+    | "accepted"
+    | "open"
+    | "partial"
+    | "filled"
+    | "cancelled"
+    | "expired"
+    | "rejected"
+    | "unknown";
+
+export type ExternalOrderSnapshot = {
+    internalOrderId: string | null;
+    externalOrderId: string | null;
+    executionAttemptId: string | null;
+    correlationId: string | null;
+    legId: string | null;
+    tokenId: string | null;
+    status: ExternalOrderStatus;
+    filledSize: number | null;
+    averageFillPrice: number | null;
+    observedAtMs: number;
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type ExternalFillSnapshot = {
+    internalOrderId: string | null;
+    externalOrderId: string | null;
+    executionAttemptId: string | null;
+    legId: string | null;
+    filledSize: number;
+    averageFillPrice: number | null;
+    observedAtMs: number;
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type ExternalExecutionSnapshot = {
+    sourceLabel: string;
+    capturedAtMs: number;
+    maxSnapshotAgeMs: number | null;
+    trustworthy: boolean;
+    orders: ExternalOrderSnapshot[];
+    fills: ExternalFillSnapshot[];
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type ReconciliationInput = {
+    capturedAtMs: number;
+    comparisonMode: "noop_stub" | "synthetic_external_snapshot_compare";
+    snapshot: ExternalExecutionSnapshot;
+};
+
+export type ReconciliationIssueType =
+    | "status_mismatch"
+    | "fill_quantity_mismatch"
+    | "fill_price_mismatch"
+    | "missing_external_order"
+    | "unexpected_external_order"
+    | "missing_external_order_id"
+    | "stale_external_snapshot"
+    | "unresolved_reconciliation_state";
+
+export type ReconciliationIssue = {
+    issueType: ReconciliationIssueType;
+    orderId: string | null;
+    externalOrderId: string | null;
+    executionAttemptId: string | null;
+    legId: string | null;
+    message: string;
+    details: Record<string, number | string | boolean | null>;
+};
+
+export type ReconciliationDiff = {
+    orderId: string | null;
+    externalOrderId: string | null;
+    executionAttemptId: string | null;
+    legId: string | null;
+    matched: boolean;
+    internalStatus: OrderStatus | null;
+    externalStatus: ExternalOrderStatus | null;
+    internalFilledSize: number | null;
+    externalFilledSize: number | null;
+    internalAverageFillPrice: number | null;
+    externalAverageFillPrice: number | null;
+    issueTypes: ReconciliationIssueType[];
+};
+
+export type ReconciliationResult = {
+    adapterMode: ExecutionMode;
+    comparisonMode: ReconciliationInput["comparisonMode"];
+    capturedAtMs: number;
+    snapshotSourceLabel: string;
+    snapshotTrustworthy: boolean;
+    issueCountsByType: Record<ReconciliationIssueType, number>;
+    matchedOrderCount: number;
+    mismatchedOrderCount: number;
+    missingExternalOrderCount: number;
+    unexpectedExternalOrderCount: number;
+    missingExternalOrderIdCount: number;
+    staleSnapshotWarningCount: number;
+    unresolvedReconciliationCount: number;
+    diffs: ReconciliationDiff[];
+    issues: ReconciliationIssue[];
+};
+
+export type ExternalReconciliationSummary = {
+    reconciliationRuns: number;
+    issueCountsByType: Record<string, number>;
+    matchedOrderCount: number;
+    mismatchedOrderCount: number;
+    missingExternalOrderCount: number;
+    unexpectedExternalOrderCount: number;
+    missingExternalOrderIdCount: number;
+    staleSnapshotWarningCount: number;
+    unresolvedReconciliationCount: number;
+    lastComparisonMode: ReconciliationInput["comparisonMode"] | null;
+    lastSnapshotSourceLabel: string | null;
+    trustworthySnapshotCount: number;
+    untrustworthySnapshotCount: number;
+};
+
 export type ReconciliationSnapshot = {
     adapterMode: ExecutionMode;
     liveExecutionEnabled: boolean;
@@ -188,4 +324,5 @@ export type ReconciliationSnapshot = {
     orderStatusCounts: Record<string, number>;
     trackedExecutionAttemptIds: string[];
     orderLifecycleSummary: OrderLifecycleSummary;
+    externalReconciliationSummary: ExternalReconciliationSummary;
 };

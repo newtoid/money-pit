@@ -1,12 +1,14 @@
 import { ExecutionAdapter } from "./executionAdapter";
-import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, TimeoutResult } from "./types";
+import { CancelResult, ExecutionRequest, ExecutionStatusResult, ExecutionSubmitResult, ReconciliationInput, ReconciliationResult, ReconciliationSnapshot, SimulatedOrderLifecycleUpdate, TimeoutResult } from "./types";
 import { OrderLifecycleStore } from "./orderLifecycle";
+import { ExternalReconciliationStore, runNoopReconciliation } from "./reconciliationModel";
 
 export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
     readonly mode = "future_live_clob" as const;
     private readonly submitStatusCounts = new Map<string, number>();
     private readonly trackedExecutionAttemptIds: string[] = [];
     private readonly orderLifecycle = new OrderLifecycleStore();
+    private readonly reconciliation = new ExternalReconciliationStore();
 
     constructor(
         private readonly opts: {
@@ -80,6 +82,13 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
         };
     }
 
+    reconcileWithExternalState(input: ReconciliationInput): ReconciliationResult {
+        return this.reconciliation.record(runNoopReconciliation({
+            adapterMode: this.mode,
+            input,
+        }));
+    }
+
     markExecutionTimedOut(executionAttemptId: string): TimeoutResult {
         return {
             executionAttemptId,
@@ -106,6 +115,7 @@ export class UnsupportedLiveExecutionAdapter implements ExecutionAdapter {
                 }, {}),
             trackedExecutionAttemptIds: [...this.trackedExecutionAttemptIds],
             orderLifecycleSummary: this.orderLifecycle.getSummary(),
+            externalReconciliationSummary: this.reconciliation.getSummary(),
         };
     }
 }
