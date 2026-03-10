@@ -13,6 +13,7 @@
     "arb:paper": "tsx src/scripts/runPaperArbTrader.ts",
     "arb:replay": "tsx src/scripts/replayArbSession.ts",
     "venue:readonly": "tsx src/scripts/runReadOnlyVenueProbe.ts",
+    "venue:reconcile": "tsx src/scripts/runRealDataReconciliationProbe.ts",
     "replay": "tsx scripts/replay.ts",
     "doctor": "tsx scripts/doctor.ts"
   },
