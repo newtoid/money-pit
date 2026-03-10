@@ -12,6 +12,7 @@ import {
     ReconciliationResult,
     SnapshotNormalizationResult,
 } from "./types";
+import { compareExternalAccounting, indexMatchedExternalFills } from "./reconciliationAccounting";
 import { matchExternalSnapshots } from "./reconciliationMatching";
 
 const EPSILON = 1e-9;
@@ -39,13 +40,41 @@ function sumFillEvents(fillEvents: FillEvent[]) {
         return {
             filledSize: 0,
             averageFillPrice: null,
+            fillEventCount: 0,
+            filledNotional: null,
+            partialFillObserved: false,
         };
     }
     const weighted = fillEvents.reduce((sum, item) => sum + (item.filledSize * item.averageFillPrice), 0);
     return {
         filledSize: totalFilled,
         averageFillPrice: weighted / totalFilled,
+        fillEventCount: fillEvents.length,
+        filledNotional: weighted,
+        partialFillObserved: fillEvents.length > 1,
     };
+}
+
+function statusProgressionRank(status: OrderStatus) {
+    switch (status) {
+        case "created":
+            return 0;
+        case "accepted":
+            return 1;
+        case "open":
+            return 2;
+        case "partial":
+            return 3;
+        case "filled":
+            return 4;
+        case "cancelled":
+        case "timed_out":
+            return 5;
+        case "rejected":
+            return 6;
+        default:
+            return 7;
+    }
 }
 
 function normalizeExternalFilledSize(order: { filledSize: number | null }) {
@@ -99,6 +128,10 @@ export function buildInternalReconciliationSnapshots(args: {
             updatedAtMs: order.updatedAtMs,
             filledSize: fillSummary.filledSize,
             averageFillPrice: fillSummary.averageFillPrice,
+            fillEventCount: fillSummary.fillEventCount,
+            filledNotional: fillSummary.filledNotional,
+            partialFillObserved: fillSummary.partialFillObserved,
+            statusProgressionRank: statusProgressionRank(comparableStatusFromLifecycleState(order.currentState)),
             knownExternalOrderId: null,
             knownExternalExecutionId: null,
             knownExternalFillIds: [],
@@ -130,6 +163,7 @@ export function runNoopReconciliation(args: {
         snapshotSourceLabel: args.input.snapshot.sourceLabel,
         snapshotTrustworthy: args.input.snapshot.trustworthy,
         issueCountsByType,
+        accountingIssueCountsByType: {},
         matchCountsByRule: {},
         unmatchedCountsByReason: {},
         ambiguousMatchCount: 0,
@@ -142,7 +176,12 @@ export function runNoopReconciliation(args: {
         missingExternalOrderIdCount: 0,
         staleSnapshotWarningCount: 0,
         unresolvedReconciliationCount: 0,
+        comparisonCoverageCounts: {},
+        skippedAccountingFields: {},
+        matchedOrdersWithAccountingAgreement: 0,
+        matchedOrdersWithAccountingDisagreement: 0,
         matchingOutcomes: [],
+        accountingComparisons: [],
         diffs: [],
         issues: [],
     };
@@ -183,6 +222,16 @@ export function runExternalReconciliation(args: {
     }, {});
     const orderMatchByReference = new Map(matching.orderOutcomes.map((item) => [item.externalReference, item]));
     const internalOrderById = new Map(args.internalOrders.map((item) => [item.orderId, item]));
+    const matchedExternalFillsByOrderId = indexMatchedExternalFills({
+        externalFills: args.input.snapshot.fills,
+        fillMatchingOutcomes: matching.fillOutcomes,
+    });
+    const accountingIssueCountsByType: Record<string, number> = {};
+    const comparisonCoverageCounts: Record<string, number> = {};
+    const skippedAccountingFields: Record<string, number> = {};
+    const accountingComparisons = [];
+    let matchedOrdersWithAccountingAgreement = 0;
+    let matchedOrdersWithAccountingDisagreement = 0;
 
     if (
         args.input.snapshot.maxSnapshotAgeMs !== null
@@ -248,6 +297,7 @@ export function runExternalReconciliation(args: {
                 internalAverageFillPrice: null,
                 externalAverageFillPrice: roundIfFinite(externalOrder.averageFillPrice),
                 issueTypes: diffIssueTypes,
+                accountingIssueTypes: [],
             });
             continue;
         }
@@ -341,6 +391,33 @@ export function runExternalReconciliation(args: {
             }));
         }
 
+        const accountingComparison = compareExternalAccounting({
+            internalOrder,
+            externalOrder,
+            matchedExternalFills: matchedExternalFillsByOrderId.get(internalOrder.orderId) ?? [],
+        });
+        accountingComparisons.push(accountingComparison);
+        if (accountingComparison.issueTypes.length === 0) matchedOrdersWithAccountingAgreement += 1;
+        else matchedOrdersWithAccountingDisagreement += 1;
+        for (const issueType of accountingComparison.issueTypes) {
+            accountingIssueCountsByType[issueType] = (accountingIssueCountsByType[issueType] ?? 0) + 1;
+        }
+        comparisonCoverageCounts.order_accounting_compared = (comparisonCoverageCounts.order_accounting_compared ?? 0) + 1;
+        if (internalOrder.fillEventCount > 0 || externalOrder.externalFillCount !== null) {
+            comparisonCoverageCounts.fill_count = (comparisonCoverageCounts.fill_count ?? 0) + 1;
+        }
+        if (internalOrder.filledNotional !== null && (externalOrder.totalFilledNotional !== null || (matchedExternalFillsByOrderId.get(internalOrder.orderId)?.length ?? 0) > 0)) {
+            comparisonCoverageCounts.filled_notional = (comparisonCoverageCounts.filled_notional ?? 0) + 1;
+        }
+        if (internalOrder.averageFillPrice !== null && externalOrder.averageFillPrice !== null) {
+            comparisonCoverageCounts.avg_fill_price = (comparisonCoverageCounts.avg_fill_price ?? 0) + 1;
+        }
+        comparisonCoverageCounts.status_progression = (comparisonCoverageCounts.status_progression ?? 0) + 1;
+        comparisonCoverageCounts.partial_fill_flag = (comparisonCoverageCounts.partial_fill_flag ?? 0) + 1;
+        for (const skippedField of accountingComparison.skippedFields) {
+            skippedAccountingFields[skippedField] = (skippedAccountingFields[skippedField] ?? 0) + 1;
+        }
+
         diffs.push({
             orderId: internalOrder.orderId,
             externalOrderId: externalOrder.externalOrderId,
@@ -354,6 +431,7 @@ export function runExternalReconciliation(args: {
             internalAverageFillPrice: roundIfFinite(internalOrder.averageFillPrice),
             externalAverageFillPrice: roundIfFinite(externalOrder.averageFillPrice),
             issueTypes: diffIssueTypes,
+            accountingIssueTypes: accountingComparison.issueTypes,
         });
     }
 
@@ -398,6 +476,7 @@ export function runExternalReconciliation(args: {
         snapshotSourceLabel: args.input.snapshot.sourceLabel,
         snapshotTrustworthy: args.input.snapshot.trustworthy,
         issueCountsByType,
+        accountingIssueCountsByType,
         matchCountsByRule,
         unmatchedCountsByReason,
         ambiguousMatchCount: (unmatchedCountsByReason.unmatched_ambiguous_candidates ?? 0) + (unmatchedCountsByReason.duplicate_internal_candidates ?? 0),
@@ -410,7 +489,12 @@ export function runExternalReconciliation(args: {
         missingExternalOrderIdCount: issueCountsByType.missing_external_order_id,
         staleSnapshotWarningCount: issueCountsByType.stale_external_snapshot,
         unresolvedReconciliationCount: issueCountsByType.unresolved_reconciliation_state,
+        comparisonCoverageCounts,
+        skippedAccountingFields,
+        matchedOrdersWithAccountingAgreement,
+        matchedOrdersWithAccountingDisagreement,
         matchingOutcomes: matching.allOutcomes,
+        accountingComparisons,
         diffs,
         issues,
     };
@@ -440,6 +524,9 @@ export class ExternalReconciliationStore {
             for (const [rule, count] of Object.entries(result.matchCountsByRule)) {
                 acc.matchCountsByRule[rule] = (acc.matchCountsByRule[rule] ?? 0) + count;
             }
+            for (const [issueType, count] of Object.entries(result.accountingIssueCountsByType)) {
+                acc.accountingIssueCountsByType[issueType] = (acc.accountingIssueCountsByType[issueType] ?? 0) + count;
+            }
             for (const [reason, count] of Object.entries(result.unmatchedCountsByReason)) {
                 acc.unmatchedCountsByReason[reason] = (acc.unmatchedCountsByReason[reason] ?? 0) + count;
             }
@@ -453,6 +540,8 @@ export class ExternalReconciliationStore {
             acc.missingExternalOrderIdCount += result.missingExternalOrderIdCount;
             acc.staleSnapshotWarningCount += result.staleSnapshotWarningCount;
             acc.unresolvedReconciliationCount += result.unresolvedReconciliationCount;
+            acc.matchedOrdersWithAccountingAgreement += result.matchedOrdersWithAccountingAgreement;
+            acc.matchedOrdersWithAccountingDisagreement += result.matchedOrdersWithAccountingDisagreement;
             acc.lastComparisonMode = result.comparisonMode;
             acc.lastSnapshotSourceLabel = result.snapshotSourceLabel;
             if (result.snapshotTrustworthy) acc.trustworthySnapshotCount += 1;
@@ -461,10 +550,17 @@ export class ExternalReconciliationStore {
             for (const [issueType, count] of Object.entries(result.issueCountsByType)) {
                 acc.issueCountsByType[issueType] = (acc.issueCountsByType[issueType] ?? 0) + count;
             }
+            for (const [field, count] of Object.entries(result.comparisonCoverageCounts)) {
+                acc.comparisonCoverageCounts[field] = (acc.comparisonCoverageCounts[field] ?? 0) + count;
+            }
+            for (const [field, count] of Object.entries(result.skippedAccountingFields)) {
+                acc.skippedAccountingFields[field] = (acc.skippedAccountingFields[field] ?? 0) + count;
+            }
             return acc;
         }, {
             reconciliationRuns: 0,
             issueCountsByType: {},
+            accountingIssueCountsByType: {},
             matchCountsByRule: {},
             unmatchedCountsByReason: {},
             ambiguousMatchCount: 0,
@@ -477,6 +573,10 @@ export class ExternalReconciliationStore {
             missingExternalOrderIdCount: 0,
             staleSnapshotWarningCount: 0,
             unresolvedReconciliationCount: 0,
+            comparisonCoverageCounts: {},
+            skippedAccountingFields: {},
+            matchedOrdersWithAccountingAgreement: 0,
+            matchedOrdersWithAccountingDisagreement: 0,
             lastComparisonMode: null,
             lastSnapshotSourceLabel: null,
             trustworthySnapshotCount: 0,

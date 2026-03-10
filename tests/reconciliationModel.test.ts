@@ -116,6 +116,9 @@ test("reconciliation model reports matching synthetic external snapshots", () =>
                         status: "open",
                         filledSize: 1,
                         averageFillPrice: 0.4,
+                        externalFillCount: 1,
+                        totalFilledNotional: 0.4,
+                        partialFillObserved: false,
                         observedAtMs: 1200,
                         rawSourceMetadata: null,
                     },
@@ -131,6 +134,9 @@ test("reconciliation model reports matching synthetic external snapshots", () =>
                         status: "open",
                         filledSize: 1,
                         averageFillPrice: 0.4,
+                        externalFillCount: 1,
+                        totalFilledNotional: 0.4,
+                        partialFillObserved: false,
                         observedAtMs: 1200,
                         rawSourceMetadata: null,
                     },
@@ -145,6 +151,8 @@ test("reconciliation model reports matching synthetic external snapshots", () =>
     assert.equal(result.mismatchedOrderCount, 0);
     assert.equal(result.issueCountsByType.status_mismatch, 0);
     assert.equal(result.matchCountsByRule.matched_by_execution_attempt_leg, 2);
+    assert.equal(result.matchedOrdersWithAccountingAgreement, 2);
+    assert.equal(result.matchedOrdersWithAccountingDisagreement, 0);
 });
 
 test("reconciliation model reports mismatches, stale snapshots, and unexpected orders", () => {
@@ -177,6 +185,9 @@ test("reconciliation model reports mismatches, stale snapshots, and unexpected o
                         status: "filled",
                         filledSize: 0.5,
                         averageFillPrice: 0.41,
+                        externalFillCount: 1,
+                        totalFilledNotional: 0.205,
+                        partialFillObserved: true,
                         observedAtMs: 1200,
                         rawSourceMetadata: null,
                     },
@@ -192,6 +203,9 @@ test("reconciliation model reports mismatches, stale snapshots, and unexpected o
                         status: "open",
                         filledSize: 0,
                         averageFillPrice: null,
+                        externalFillCount: 0,
+                        totalFilledNotional: 0,
+                        partialFillObserved: false,
                         observedAtMs: 1200,
                         rawSourceMetadata: null,
                     },
@@ -210,6 +224,8 @@ test("reconciliation model reports mismatches, stale snapshots, and unexpected o
     assert.equal(result.issueCountsByType.fill_price_mismatch, 1);
     assert.equal(result.issueCountsByType.status_mismatch, 1);
     assert.equal(result.unmatchedCountsByReason.partial_identifier_insufficient ?? 0, 1);
+    assert.equal(result.accountingIssueCountsByType.external_internal_notional_mismatch, 1);
+    assert.equal(result.matchedOrdersWithAccountingDisagreement, 1);
 });
 
 test("replay adapter accepts synthetic reconciliation input and stores summary", () => {
@@ -258,6 +274,9 @@ test("replay adapter accepts synthetic reconciliation input and stores summary",
                     status: "open",
                     filledSize: 1,
                     averageFillPrice: 0.4,
+                    externalFillCount: 1,
+                    totalFilledNotional: 0.4,
+                    partialFillObserved: false,
                     observedAtMs: 1200,
                     rawSourceMetadata: null,
                 },
@@ -273,6 +292,9 @@ test("replay adapter accepts synthetic reconciliation input and stores summary",
                     status: "open",
                     filledSize: 1,
                     averageFillPrice: 0.4,
+                    externalFillCount: 1,
+                    totalFilledNotional: 0.4,
+                    partialFillObserved: false,
                     observedAtMs: 1200,
                     rawSourceMetadata: null,
                 },
@@ -284,4 +306,5 @@ test("replay adapter accepts synthetic reconciliation input and stores summary",
     assert.equal(result.matchedOrderCount, 2);
     assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.reconciliationRuns, 1);
     assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.snapshotsIngestedByProvenance.synthetic_test_snapshot, 1);
+    assert.equal(adapter.reconcileExecutionState().externalReconciliationSummary.matchedOrdersWithAccountingAgreement, 2);
 });
