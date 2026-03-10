@@ -63,6 +63,7 @@ This repo currently implements:
 - explicit partial-identifier matching-rules scaffolding behind reconciliation
 - explicit external-state reconciliation accounting refinements behind matching
 - explicit internal external-identifier carriage plus richer synthetic reconciliation fixtures behind reconciliation
+- explicit external account / balance reconciliation scaffolding behind the adapter boundary
 
 Not yet implemented in this phase:
 
@@ -167,6 +168,12 @@ Not yet implemented in this phase:
   - matched orders can compare external fill count, average fill price, filled notional, status progression, and partial-fill state against internal accounting snapshots
   - insufficient accounting data is reported explicitly through skipped-field counts
   - reconciliation remains read-only and does not mutate portfolio or order state
+- External account / balance reconciliation is now scaffolded separately and remains non-live:
+  - it is separate from order lifecycle, matching, order-level reconciliation, and portfolio mutation
+  - it compares explicit internal account snapshots to external-style account snapshots
+  - current comparison fields are available balance, reserved balance, and total balance
+  - missing external asset balances, unexpected external asset balances, stale account snapshots, and insufficient comparison coverage are surfaced explicitly
+  - balance reconciliation remains read-only and does not mutate internal portfolio/accounting state
 - Synthetic reconciliation fixture coverage is now richer:
   - full external-id matches
   - partial-id matches and partial-id insufficiency
@@ -175,3 +182,4 @@ Not yet implemented in this phase:
   - missing identifiers with otherwise valid accounting fields
   - differing fill/event shapes for partial fills
   - status progression disagreement with otherwise comparable quantities
+  - account/balance fixtures for matching balances, mismatched balances, missing assets, unexpected assets, partial coverage, and stale snapshots

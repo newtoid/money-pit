@@ -230,6 +230,22 @@ Consequence:
 - only explicit synthetic fixture/scaffold paths may attach synthetic ids
 - reconciliation reports now surface internal identifier coverage and provenance counts
 
+### Keep external account/balance reconciliation separate from order reconciliation and portfolio mutation
+
+Reason:
+
+- order-state reconciliation and account/balance reconciliation answer different operational questions
+- balance comparison needs explicit missing-data handling instead of implicit portfolio updates
+- no venue-truth account feed exists yet, so the first version must stay read-only and synthetic-input driven
+
+Consequence:
+
+- account/balance reconciliation now lives in its own module under `src/live/`
+- adapters expose a separate non-live `reconcileAccountBalances(...)` path
+- internal vs external balance snapshots are compared explicitly on available, reserved, and total balances
+- missing asset rows, unexpected external asset rows, stale snapshots, and insufficient coverage are surfaced as machine-readable issues
+- reconciliation does not mutate internal portfolio/accounting state
+
 ### Add an explicit execution-attempt state machine before live execution scaffolding
 
 Reason:
