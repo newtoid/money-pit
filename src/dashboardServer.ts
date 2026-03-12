@@ -274,10 +274,12 @@ function htmlPage() {
       const collateral = (engine && engine.collateral) || {};
       const cashRaw = Number(collateral.balanceRaw);
       const cashUsdc = Number.isFinite(cashRaw) ? (cashRaw / 1_000_000) : null;
-      const invShares = Number(engine && engine.currentYesPosition);
+      const invYesShares = Number(engine && engine.currentYesPosition);
+      const invNoShares = Number(engine && engine.currentNoPosition);
       const fairYes = (q.fairYes ?? signal.polymarketFairYes ?? null);
-      const inventoryUsdc = (Number.isFinite(invShares) && Number.isFinite(Number(fairYes)))
-        ? (invShares * Number(fairYes))
+      const inventoryUsdc = Number.isFinite(Number(fairYes))
+        ? (((Number.isFinite(invYesShares) ? invYesShares : 0) * Number(fairYes))
+          + ((Number.isFinite(invNoShares) ? invNoShares : 0) * (1 - Number(fairYes))))
         : null;
       const equityUsdc = (cashUsdc !== null && inventoryUsdc !== null) ? (cashUsdc + inventoryUsdc) : null;
       const spreadBps = (Number.isFinite(Number(q.ask)) && Number.isFinite(Number(q.bid)) && ((Number(q.ask) + Number(q.bid)) > 0))
@@ -298,7 +300,9 @@ function htmlPage() {
         polyImpliedMoveBps: signal.polymarketImpliedMoveBps ?? null,
         lagBps: signal.lagBps ?? null,
         spot: signal.spotPrice ?? null,
-        inv: engine.currentYesPosition ?? null,
+        inv: ((engine.currentYesPosition ?? 0) + (engine.currentNoPosition ?? 0)),
+        invYes: engine.currentYesPosition ?? null,
+        invNo: engine.currentNoPosition ?? null,
         net: pnl.netYes ?? null,
         requiredLagBps: guards.requiredLagBps ?? null,
         maxYesSpreadBps: guards.maxYesSpreadBps ?? null,
@@ -530,11 +534,11 @@ function htmlPage() {
           + ' · polyMove=' + num(sig.polymarketImpliedMoveBps, 1) + ' bps'
           + ' · lag=' + num(sig.lagBps, 1) + ' bps'
           + ' · connected=' + (sig.spotConnected ? 'yes' : 'no');
-        const inPos = Number(e.currentYesPosition ?? 0) > 0;
+        const inPos = (Number(e.currentYesPosition ?? 0) + Number(e.currentNoPosition ?? 0)) > 0;
         const lagOkNow = Number.isFinite(sig.lagBps) && Number.isFinite(e.entryGuards?.requiredLagBps) && Number(sig.lagBps) >= Number(e.entryGuards.requiredLagBps);
         document.getElementById('story').textContent =
           inPos
-            ? 'Holding YES and waiting for catch-up/price-rise exit.'
+            ? 'Holding inventory and waiting for exit/flatten conditions.'
             : (lagOkNow ? 'Setup looks favorable: lag is above required edge.' : 'No strong edge now: waiting for better lag/spread.');
         document.getElementById('story2').textContent =
           'Rule: buy when spot leads this market; sell when Polymarket catches up and price rises.';
@@ -600,7 +604,8 @@ function htmlPage() {
           : 'no quote yet';
         document.getElementById('quote2').textContent =
           'at=' + fmtTs(q ? q.at : null)
-          + ' · inventory=' + (e.currentYesPosition ?? '-')
+          + ' · YES=' + (e.currentYesPosition ?? '-')
+          + ' · NO=' + (e.currentNoPosition ?? '-')
           + ' · lastPlaced=' + JSON.stringify(e.lastPlaced || {});
 
         document.getElementById('exec').textContent =
@@ -636,15 +641,19 @@ function htmlPage() {
           'reason=' + (ff.reason || '-')
           + ' · mode=' + (ff.mode || '-')
           + ' · allowLoss=' + (ff.allowLoss ? 'yes' : 'no')
-          + ' · exit@' + num(ff.candidateExit, 4)
-          + ' vs avg@' + num(ff.avgEntryPriceYes, 4)
+          + ' · YES exit@' + num(ff.candidateExitYes, 4) + ' vs avg@' + num(ff.avgEntryPriceYes, 4)
+          + ' · NO exit@' + num(ff.candidateExitNo, 4) + ' vs avg@' + num(ff.avgEntryPriceNo, 4)
           + ' · window<= ' + num(ff.beforeEndSec, 0) + 's';
 
         const cashRaw = Number((e.collateral && e.collateral.balanceRaw) ? e.collateral.balanceRaw : NaN);
         const cashUsdc = Number.isFinite(cashRaw) ? (cashRaw / 1_000_000) : null;
-        const invShares = Number(e.currentYesPosition ?? NaN);
+        const invYesShares = Number(e.currentYesPosition ?? NaN);
+        const invNoShares = Number(e.currentNoPosition ?? NaN);
         const fairYes = Number(q?.fairYes ?? sig.polymarketFairYes ?? NaN);
-        const invUsdc = (Number.isFinite(invShares) && Number.isFinite(fairYes)) ? (invShares * fairYes) : null;
+        const invUsdc = Number.isFinite(fairYes)
+          ? (((Number.isFinite(invYesShares) ? invYesShares : 0) * fairYes)
+            + ((Number.isFinite(invNoShares) ? invNoShares : 0) * (1 - fairYes)))
+          : null;
         const equityUsdc = (cashUsdc !== null && invUsdc !== null) ? (cashUsdc + invUsdc) : null;
         const p1m = rollingDeltaSec('equityUsdc', 60);
         const p5m = rollingDeltaSec('equityUsdc', 300);
@@ -664,8 +673,9 @@ function htmlPage() {
           + ' · avgEntryLag=' + num(pnl.avgEntryLagBps, 1) + 'bps'
           + ' · avgHold=' + num(pnl.avgHoldSec, 1) + 's'
           + ' · currentHold=' + num(pnl.currentHoldSec, 1) + 's'
-          + ' · pos=' + num(e.currentYesPosition, 2)
-          + ' @fair ' + num((Number.isFinite(fairYes) ? fairYes : null), 4);
+          + ' · YES=' + num(e.currentYesPosition, 2)
+          + ' · NO=' + num(e.currentNoPosition, 2)
+          + ' · fairYES=' + num((Number.isFinite(fairYes) ? fairYes : null), 4);
         const simpleMode = !!(s.config && s.config.simpleMode);
         const controlMode = document.getElementById('controlMode');
         if (controlMode) controlMode.textContent = simpleMode
