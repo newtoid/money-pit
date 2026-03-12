@@ -7,6 +7,7 @@ Safety and observability must always be prioritized over speed.
 
 Agents must read docs/PROJECT_MEMORY.md before proposing architectural changes or development phases.
 
+Session manifest updates must remain explicit and one-shot; no background process may mutate session state automatically.
 ---
 
 ## Architecture Review Agent

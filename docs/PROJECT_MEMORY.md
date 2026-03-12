@@ -32,6 +32,26 @@ The system must always follow these principles:
 4. **Explicit state before inference**
 5. **Reconciliation before trust**
 6. **One-shot pilots before strategy execution**
+7. **Session manifest updates must remain explicit and one-shot; no background process may mutate session state automatically.**
+
+## Session Artifact Rules
+
+Pilot session artifacts must remain explicit, append-only, and manually generated.
+
+A pilot session may produce multiple artifacts:
+
+- pilot result
+- internal baseline snapshot
+- verification result
+- reconciliation output
+
+These artifacts must be linked by a session manifest.
+
+Session manifest updates must remain explicit and one-shot.  
+No background process or loop may mutate session state automatically.
+
+Artifacts may be appended later by manual tools (for example verification or reconciliation),
+but the system must never silently modify a prior session.
 
 ---
 
