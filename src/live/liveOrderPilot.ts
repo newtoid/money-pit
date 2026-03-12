@@ -14,6 +14,12 @@ import {
     OrderExternalIdentifiers,
 } from "./types";
 import { buildLiveOrderSubmissionRequests, evaluateLiveSubmissionGuard } from "./liveSubmission";
+import {
+    createPilotSessionId,
+    createPilotSessionManifest,
+    defaultPilotSessionManifestPath,
+    writePilotSessionManifest,
+} from "./pilotSession";
 
 export type LiveOrderPilotTransport = {
     createAndPostOrder(
@@ -106,6 +112,7 @@ export async function runLiveOrderPilot(args: {
     transport: LiveOrderPilotTransport;
 }): Promise<LiveOrderPilotResult> {
     const executionAttemptId = `live-order-pilot-${args.request.invokedAtMs}`;
+    const pilotSessionId = createPilotSessionId(executionAttemptId);
     const liveRequest: LiveOrderSubmissionRequest = buildLiveOrderSubmissionRequests({
         executionAttemptId,
         correlationId: executionAttemptId,
@@ -207,12 +214,14 @@ export async function runLiveOrderPilot(args: {
     const orderBaselinePath = baseline
         ? writePilotOrderBaseline({
             baselineDir: args.config.baselineDir,
-            executionAttemptId,
+            executionAttemptId: pilotSessionId,
             orderSnapshot: baseline,
         })
         : null;
 
     const result: LiveOrderPilotResult = {
+        pilotSessionId,
+        pilotSessionManifestPath: null,
         terminalState,
         requestSent,
         denied: !requestSent,
@@ -232,10 +241,51 @@ export async function runLiveOrderPilot(args: {
 
     const resultOutputPath = writePilotResult({
         resultDir: args.config.resultDir,
-        executionAttemptId,
+        executionAttemptId: pilotSessionId,
         result,
     });
     result.resultOutputPath = resultOutputPath;
+    const manifestCapture = writePilotSessionManifest({
+        manifestPath: defaultPilotSessionManifestPath({
+            resultDir: args.config.resultDir,
+            pilotSessionId,
+        }),
+        manifest: createPilotSessionManifest({
+            pilotSessionId,
+            executionAttemptId,
+            marketId: args.request.marketId,
+            assetId: args.request.assetId,
+            externalOrderId: result.venueAck?.externalOrderId ?? null,
+            terminalState: result.terminalState,
+            createdAtMs: args.request.invokedAtMs,
+            sourceLabel: args.config.logLabel,
+            rawSourceMetadata: {
+                requestSent: result.requestSent,
+                denied: result.denied,
+            },
+            artifacts: [
+                {
+                    artifactType: "pilot_result",
+                    artifactPath: resultOutputPath,
+                    attachedAtMs: args.request.invokedAtMs,
+                    status: "present",
+                    provenance: "pilot_runtime_output",
+                    notes: ["one_shot_live_order_pilot"],
+                },
+                ...(orderBaselinePath
+                    ? [{
+                        artifactType: "order_baseline" as const,
+                        artifactPath: orderBaselinePath,
+                        attachedAtMs: args.request.invokedAtMs,
+                        status: "present" as const,
+                        provenance: "pilot_runtime_output" as const,
+                        notes: ["internal_order_baseline_for_post_submit_verification"],
+                    }]
+                    : []),
+            ],
+        }),
+    });
+    result.pilotSessionManifestPath = manifestCapture.manifestPath;
     fs.writeFileSync(resultOutputPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
     return result;
 }

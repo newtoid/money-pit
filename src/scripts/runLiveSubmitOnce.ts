@@ -130,6 +130,8 @@ async function main() {
         followUp: result.followUp,
         resultOutputPath: result.resultOutputPath,
         internalOrderBaselinePath: result.internalOrderBaselinePath,
+        pilotSessionId: result.pilotSessionId,
+        pilotSessionManifestPath: result.pilotSessionManifestPath,
     });
 
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

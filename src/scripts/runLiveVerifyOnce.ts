@@ -70,6 +70,8 @@ async function main() {
         matchingTradeSnapshotCount: result.matchingTradeSnapshotCount,
         orderReconciliationMatchedPilotBaseline: result.orderReconciliationMatchedPilotBaseline,
         accountPartialCoverageOnly: result.accountPartialCoverageOnly,
+        pilotSessionId: result.pilotSessionId,
+        pilotSessionManifestPath: result.pilotSessionManifestPath,
         limitationCounts: result.limitationCounts,
     });
 

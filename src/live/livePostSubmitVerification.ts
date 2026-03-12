@@ -7,9 +7,12 @@ import { runExternalBalanceReconciliation } from "./balanceReconciliation";
 import { loadInternalBaseline } from "./internalBaseline";
 import { LiveOrderPilotResult, ReconciliationResult, BalanceReconciliationResult } from "./types";
 import { logger } from "../logger";
+import { attachArtifactToPilotSession } from "./pilotSession";
 
 export type LivePostSubmitVerificationResult = {
     verifiedAtMs: number;
+    pilotSessionId: string | null;
+    pilotSessionManifestPath: string | null;
     pilotExecutionAttemptId: string;
     pilotResultPath: string;
     pilotExternalOrderId: string | null;
@@ -183,6 +186,8 @@ export async function runLivePostSubmitVerification(args: {
 
     const result: LivePostSubmitVerificationResult = {
         verifiedAtMs,
+        pilotSessionId: pilot.pilotSessionId ?? null,
+        pilotSessionManifestPath: pilot.pilotSessionManifestPath ?? null,
         pilotExecutionAttemptId: pilot.executionAttemptId,
         pilotResultPath: path.resolve(args.inputs.pilotResultPath),
         pilotExternalOrderId,
@@ -212,6 +217,27 @@ export async function runLivePostSubmitVerification(args: {
         const outputPath = path.resolve(args.inputs.outputPath);
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
         fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, "utf8");
+        if (pilot.pilotSessionManifestPath) {
+            const capture = attachArtifactToPilotSession({
+                manifestPath: pilot.pilotSessionManifestPath,
+                artifact: {
+                    artifactType: "verification_result",
+                    artifactPath: outputPath,
+                    attachedAtMs: verifiedAtMs,
+                    status: "present",
+                    provenance: "post_submit_verification_output",
+                    notes: [
+                        externalOrderIdFound ? "external_order_visible" : "external_order_not_visible",
+                        result.orderReconciliationMatchedPilotBaseline ? "pilot_baseline_matched" : "pilot_baseline_not_matched",
+                    ],
+                },
+                externalOrderId: pilotExternalOrderId,
+                marketId: context.marketId,
+                assetId: context.assetId,
+                terminalState: "verification_recorded",
+            });
+            result.pilotSessionManifestPath = capture.manifestPath;
+        }
         logger.info({
             msg: "wrote live post-submit verification output",
             source: args.readOnlyVenueConfig.readOnlyLogLabel,

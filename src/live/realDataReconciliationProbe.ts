@@ -34,6 +34,8 @@ export type RealDataReconciliationResult = {
     balanceReconciliation: BalanceReconciliationResult | null;
     internalOrderBaselineCount: number;
     internalAccountBaselineAssetCount: number;
+    pilotSessionId: string | null;
+    pilotSessionManifestPath: string | null;
     limitationCounts: Record<string, number>;
     limitations: RealDataReconciliationLimitations;
 };
@@ -117,6 +119,8 @@ export async function runRealDataReconciliationProbe(args: {
     probeConfig: RealDataReconciliationConfig;
     transport?: ReadOnlyVenueTransport;
     now?: number;
+    pilotSessionId?: string | null;
+    pilotSessionManifestPath?: string | null;
 }): Promise<RealDataReconciliationResult> {
     const capturedAtMs = args.now ?? Date.now();
     const transport = args.transport ?? createPolymarketReadOnlyTransport(args.readOnlyVenueConfig);
@@ -183,6 +187,8 @@ export async function runRealDataReconciliationProbe(args: {
         balanceReconciliation,
         internalOrderBaselineCount: internalOrders.length,
         internalAccountBaselineAssetCount: internalAccount.assets.length,
+        pilotSessionId: args.pilotSessionId ?? null,
+        pilotSessionManifestPath: args.pilotSessionManifestPath ?? null,
         limitationCounts: limitationSummary.limitationCounts,
         limitations: limitationSummary.limitations,
     };
