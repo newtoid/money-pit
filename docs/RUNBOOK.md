@@ -314,6 +314,12 @@ Show a pilot session manifest:
 npm run live:session-show -- --session <pilot-session-id-or-manifest-path>
 ```
 
+Show the newest pilot session manifest:
+
+```bash
+npm run live:session-show -- --latest
+```
+
 Behavior:
 
 - loads the session manifest only
@@ -361,6 +367,15 @@ The dashboard now includes read-only cards for:
 
 - latest live pilot result from `data/pilots/*.result.json`
 - latest post-submit verification result from `data/pilots/*.verify.json`
+- latest pilot session manifest summary from `data/pilots/*.session.json`
+
+The latest session card shows:
+
+- newest `pilotSessionId`
+- current terminal state
+- whether verification is attached
+- whether reconciliation is attached
+- aggregate gap counts across stored session manifests
 
 Those cards are file-backed status only. They do not submit orders, trigger verification, or poll in the background.
 - configured pilot max size is less than or equal to the hard-coded absolute pilot cap

@@ -292,6 +292,24 @@ Consequence:
 - session manifests keep missing artifacts visible and machine-readable
 - no new live behavior, loops, or retries are introduced by this artifact layer
 
+### Surface latest pilot-session state through read-only operator tooling
+
+Reason:
+
+- once session manifests exist, operators need a fast way to see the latest session state without opening raw JSON files manually
+- the next operational risk is not missing execution mechanics, but missing visibility into whether verification or reconciliation artifacts were attached
+- this visibility should remain read-only and should not trigger any live or read-only venue fetches by itself
+
+Consequence:
+
+- `live:session-show` now supports `--latest` to load the newest session manifest from the pilot result directory
+- the dashboard now exposes a latest-session summary card alongside the existing pilot and verification cards
+- session-gap counts stay explicit:
+  - missing verification
+  - missing reconciliation
+  - fully linked sessions
+- no loops, polling, retries, or live submission behavior are added by this observability layer
+
 ### Add authenticated venue connectivity only through a dedicated read-only layer with hard safety gates
 
 Reason:

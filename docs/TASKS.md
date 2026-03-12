@@ -161,11 +161,15 @@
 
 ## Next Phase
 
-- [ ] Improve operator-facing pilot session observability:
+- [x] Improve operator-facing pilot session observability:
   - latest-session discovery
   - stronger dashboard/session summaries
   - clearer missing-artifact reporting
   - repeatable reconciliation outputs linked by session
+
+## Next Phase
+
+- [ ] Add pilot-session artifact capture/export for verification and reconciliation outputs as first-class operator bundles.
 
 ## Later
 
