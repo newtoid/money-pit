@@ -3,6 +3,7 @@ import path from "node:path";
 import { loadLiveOrderPilotConfig } from "../config/liveOrderPilot";
 import { LiveOrderPilotResult } from "./types";
 import { LivePostSubmitVerificationResult } from "./livePostSubmitVerification";
+import { readLatestPilotSessionManifest, listPilotSessionManifestPaths } from "./pilotSession";
 
 type LiveOpsArtifactMeta = {
     filePath: string | null;
@@ -10,6 +11,28 @@ type LiveOpsArtifactMeta = {
 };
 
 export type LiveOpsStatusSnapshot = {
+    sessions: {
+        latest: {
+            pilotSessionId: string;
+            manifestPath: string;
+            mtimeMs: number;
+            currentTerminalState: string;
+            attachmentStatus: {
+                verificationAttached: boolean;
+                reconciliationAttached: boolean;
+            };
+            missingArtifacts: string[];
+            externalOrderId: string | null;
+            marketId: string | null;
+            assetId: string | null;
+        } | null;
+        count: number;
+        countsByGap: {
+            missingVerification: number;
+            missingReconciliation: number;
+            fullyLinked: number;
+        };
+    };
     pilot: {
         latest: (LiveOrderPilotResult & LiveOpsArtifactMeta) | null;
         count: number;
@@ -77,7 +100,46 @@ export function readLiveOpsStatusSnapshot(): LiveOpsStatusSnapshot {
         dirPath: pilotConfig.resultDir,
         fileSuffix: ".verify.json",
     });
+    const sessionEntries = listPilotSessionManifestPaths(pilotConfig.resultDir);
+    const latestSession = readLatestPilotSessionManifest(pilotConfig.resultDir);
+    const countsByGap = sessionEntries.reduce((acc, item) => {
+        try {
+            const manifest = JSON.parse(fs.readFileSync(item.manifestPath, "utf8")) as {
+                attachmentStatus?: { verificationAttached?: boolean; reconciliationAttached?: boolean };
+            };
+            const verificationAttached = Boolean(manifest.attachmentStatus?.verificationAttached);
+            const reconciliationAttached = Boolean(manifest.attachmentStatus?.reconciliationAttached);
+            if (!verificationAttached) acc.missingVerification += 1;
+            if (!reconciliationAttached) acc.missingReconciliation += 1;
+            if (verificationAttached && reconciliationAttached) acc.fullyLinked += 1;
+        } catch {
+            acc.missingVerification += 1;
+            acc.missingReconciliation += 1;
+        }
+        return acc;
+    }, {
+        missingVerification: 0,
+        missingReconciliation: 0,
+        fullyLinked: 0,
+    });
     return {
+        sessions: {
+            latest: latestSession
+                ? {
+                    pilotSessionId: latestSession.manifest.pilotSessionId,
+                    manifestPath: latestSession.manifestPath,
+                    mtimeMs: latestSession.mtimeMs,
+                    currentTerminalState: latestSession.manifest.currentTerminalState,
+                    attachmentStatus: latestSession.manifest.attachmentStatus,
+                    missingArtifacts: latestSession.manifest.missingArtifacts,
+                    externalOrderId: latestSession.manifest.externalOrderId,
+                    marketId: latestSession.manifest.marketId,
+                    assetId: latestSession.manifest.assetId,
+                }
+                : null,
+            count: sessionEntries.length,
+            countsByGap,
+        },
         pilot,
         verification,
     };

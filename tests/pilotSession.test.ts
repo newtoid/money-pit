@@ -5,7 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { runLiveOrderPilot } from "../src/live/liveOrderPilot";
 import { runLivePostSubmitVerification } from "../src/live/livePostSubmitVerification";
-import { readPilotSessionManifest } from "../src/live/pilotSession";
+import {
+    readLatestPilotSessionManifest,
+    readPilotSessionManifest,
+    writePilotSessionManifest,
+} from "../src/live/pilotSession";
 import { ReadOnlyVenueConfig } from "../src/config/readOnlyVenue";
 
 function baseReadOnlyConfig(): ReadOnlyVenueConfig {
@@ -155,4 +159,76 @@ test("post-submit verification attaches its artifact to the pilot session manife
     assert.equal(manifest.attachmentStatus.verificationAttached, true);
     assert.equal(manifest.latestArtifactPaths.verificationResult, verificationPath);
     assert.equal(manifest.currentTerminalState, "verification_recorded");
+});
+
+test("readLatestPilotSessionManifest returns the newest manifest by mtime", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pilot-session-latest-"));
+    const olderManifestPath = path.join(tempDir, "older.session.json");
+    const newerManifestPath = path.join(tempDir, "newer.session.json");
+
+    writePilotSessionManifest({
+        manifestPath: olderManifestPath,
+        manifest: {
+            pilotSessionId: "older-session",
+            sourceLabel: "test",
+            createdAtMs: 1000,
+            updatedAtMs: 1000,
+            executionAttemptId: "older-exec",
+            marketId: "market-1",
+            assetId: "asset-1",
+            externalOrderId: null,
+            currentTerminalState: "submitted_acknowledged",
+            artifacts: [],
+            latestArtifactPaths: {
+                pilotResult: null,
+                orderBaseline: null,
+                verificationResult: null,
+                reconciliationResult: null,
+            },
+            attachmentStatus: {
+                verificationAttached: false,
+                reconciliationAttached: false,
+            },
+            missingArtifacts: ["pilot_result", "order_baseline", "verification_result"],
+            rawSourceMetadata: null,
+        },
+    });
+
+    writePilotSessionManifest({
+        manifestPath: newerManifestPath,
+        manifest: {
+            pilotSessionId: "newer-session",
+            sourceLabel: "test",
+            createdAtMs: 2000,
+            updatedAtMs: 2000,
+            executionAttemptId: "newer-exec",
+            marketId: "market-2",
+            assetId: "asset-2",
+            externalOrderId: "ext-1",
+            currentTerminalState: "verification_recorded",
+            artifacts: [],
+            latestArtifactPaths: {
+                pilotResult: "/tmp/pilot.result.json",
+                orderBaseline: "/tmp/pilot.orders.json",
+                verificationResult: "/tmp/pilot.verify.json",
+                reconciliationResult: null,
+            },
+            attachmentStatus: {
+                verificationAttached: true,
+                reconciliationAttached: false,
+            },
+            missingArtifacts: [],
+            rawSourceMetadata: null,
+        },
+    });
+
+    const now = new Date();
+    fs.utimesSync(olderManifestPath, now, new Date(now.getTime() - 5_000));
+    fs.utimesSync(newerManifestPath, now, new Date(now.getTime() + 5_000));
+
+    const latest = readLatestPilotSessionManifest(tempDir);
+    assert.ok(latest);
+    assert.equal(latest.manifest.pilotSessionId, "newer-session");
+    assert.equal(latest.manifestPath, newerManifestPath);
+    assert.equal(latest.count, 2);
 });
