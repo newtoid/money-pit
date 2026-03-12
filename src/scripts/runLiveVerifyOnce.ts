@@ -11,6 +11,10 @@ function getArgValue(flag: string) {
 }
 
 function defaultVerificationOutputPath(pilotResultPath: string, resultDir: string) {
+    const pilotDir = path.dirname(path.resolve(pilotResultPath));
+    if (pilotDir.startsWith(path.resolve(resultDir))) {
+        return path.resolve(pilotDir, "verification-result.json");
+    }
     const base = path.basename(pilotResultPath);
     const verifyName = base.endsWith(".result.json")
         ? base.replace(/\.result\.json$/i, ".verify.json")

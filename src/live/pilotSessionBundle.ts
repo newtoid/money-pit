@@ -12,11 +12,11 @@ import {
 } from "./pilotSession";
 
 function artifactFileName(artifactType: PilotSessionArtifactType | "session_manifest") {
-    if (artifactType === "pilot_result") return "pilot.result.json";
-    if (artifactType === "order_baseline") return "order-baseline.json";
-    if (artifactType === "verification_result") return "verification.result.json";
-    if (artifactType === "reconciliation_result") return "reconciliation.result.json";
-    return "session.manifest.json";
+    if (artifactType === "pilot_result") return "pilot-result.json";
+    if (artifactType === "order_baseline") return "internal-baseline.orders.json";
+    if (artifactType === "verification_result") return "verification-result.json";
+    if (artifactType === "reconciliation_result") return "reconciliation-result.json";
+    return "session-manifest.json";
 }
 
 function copyIfPresent(args: {

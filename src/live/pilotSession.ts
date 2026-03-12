@@ -14,6 +14,13 @@ export type PilotSessionManifestMeta = {
     mtimeMs: number;
 };
 
+export function defaultPilotSessionBundleDir(args: {
+    resultDir: string;
+    pilotSessionId: string;
+}) {
+    return path.resolve(args.resultDir, "sessions", args.pilotSessionId);
+}
+
 function missingArtifactsFromLatest(args: PilotSessionManifest["latestArtifactPaths"]) {
     const missing: string[] = [];
     if (!args.pilotResult) missing.push("pilot_result");
@@ -41,7 +48,35 @@ export function defaultPilotSessionManifestPath(args: {
     resultDir: string;
     pilotSessionId: string;
 }) {
-    return path.resolve(args.resultDir, `${args.pilotSessionId}.session.json`);
+    return path.resolve(defaultPilotSessionBundleDir(args), "session-manifest.json");
+}
+
+export function defaultPilotResultPath(args: {
+    resultDir: string;
+    pilotSessionId: string;
+}) {
+    return path.resolve(defaultPilotSessionBundleDir(args), "pilot-result.json");
+}
+
+export function defaultPilotOrderBaselinePath(args: {
+    resultDir: string;
+    pilotSessionId: string;
+}) {
+    return path.resolve(defaultPilotSessionBundleDir(args), "internal-baseline.orders.json");
+}
+
+export function defaultPilotVerificationPath(args: {
+    resultDir: string;
+    pilotSessionId: string;
+}) {
+    return path.resolve(defaultPilotSessionBundleDir(args), "verification-result.json");
+}
+
+export function defaultPilotReconciliationPath(args: {
+    resultDir: string;
+    pilotSessionId: string;
+}) {
+    return path.resolve(defaultPilotSessionBundleDir(args), "reconciliation-result.json");
 }
 
 export function createPilotSessionManifest(args: {
@@ -53,6 +88,15 @@ export function createPilotSessionManifest(args: {
     terminalState: LivePilotTerminalState;
     createdAtMs: number;
     sourceLabel: string;
+    manifestPath: string;
+    sessionBundleDir: string;
+    submissionParameters: {
+        side: "buy" | "sell";
+        price: number;
+        size: number;
+        tickSize: string;
+        timeInForce: "GTC";
+    };
     rawSourceMetadata?: Record<string, unknown> | null;
     artifacts: PilotSessionArtifactRef[];
 }): PilotSessionManifest {
@@ -70,14 +114,21 @@ export function createPilotSessionManifest(args: {
         });
     }
     return {
+        sessionId: args.pilotSessionId,
         pilotSessionId: args.pilotSessionId,
+        sessionManifestPath: path.resolve(args.manifestPath),
+        sessionBundleDir: path.resolve(args.sessionBundleDir),
         sourceLabel: args.sourceLabel,
+        timestamp: args.createdAtMs,
         createdAtMs: args.createdAtMs,
         updatedAtMs: args.createdAtMs,
         executionAttemptId: args.executionAttemptId,
+        market: args.marketId,
         marketId: args.marketId,
+        asset: args.assetId,
         assetId: args.assetId,
         externalOrderId: args.externalOrderId,
+        submissionParameters: args.submissionParameters,
         currentTerminalState: args.terminalState,
         artifacts: [...args.artifacts],
         latestArtifactPaths,
@@ -119,8 +170,7 @@ export function attachArtifactToPilotSession(args: {
     terminalState?: PilotSessionManifest["currentTerminalState"];
 }): PilotSessionCaptureResult {
     const manifest = readPilotSessionManifest(args.manifestPath);
-    const nextArtifacts = manifest.artifacts.filter((item) => item.artifactType !== args.artifact.artifactType);
-    nextArtifacts.push(args.artifact);
+    const nextArtifacts = [...manifest.artifacts, args.artifact];
     const latestArtifactPaths = {
         ...manifest.latestArtifactPaths,
     };
@@ -132,9 +182,12 @@ export function attachArtifactToPilotSession(args: {
     const nextManifest: PilotSessionManifest = {
         ...manifest,
         updatedAtMs: args.artifact.attachedAtMs,
+        sessionManifestPath: manifest.sessionManifestPath ?? path.resolve(args.manifestPath),
         externalOrderId: args.externalOrderId ?? manifest.externalOrderId,
         marketId: args.marketId ?? manifest.marketId,
+        market: args.marketId ?? manifest.marketId ?? manifest.market,
         assetId: args.assetId ?? manifest.assetId,
+        asset: args.assetId ?? manifest.assetId ?? manifest.asset,
         currentTerminalState: args.terminalState ?? manifest.currentTerminalState,
         artifacts: nextArtifacts.sort((a, b) => a.attachedAtMs - b.attachedAtMs),
         latestArtifactPaths,
@@ -157,8 +210,10 @@ export function summarizePilotSessionManifest(manifest: PilotSessionManifest) {
         pilotSessionId: manifest.pilotSessionId,
         manifestPath: null as string | null,
         executionAttemptId: manifest.executionAttemptId,
+        sessionBundleDir: manifest.sessionBundleDir ?? null,
         currentTerminalState: manifest.currentTerminalState,
         externalOrderId: manifest.externalOrderId,
+        submissionParameters: manifest.submissionParameters,
         attachmentStatus: manifest.attachmentStatus,
         latestBundleManifestPath: manifest.latestBundleManifestPath ?? null,
         bundleExportCount: (manifest.bundleExports ?? []).length,
@@ -194,6 +249,11 @@ export function resolvePilotSessionManifestPath(args: {
 }) {
     const explicitPath = path.resolve(args.pilotSessionIdOrPath);
     if (fs.existsSync(explicitPath)) return explicitPath;
+    const canonicalPath = defaultPilotSessionManifestPath({
+        resultDir: args.resultDir,
+        pilotSessionId: args.pilotSessionIdOrPath,
+    });
+    if (fs.existsSync(canonicalPath)) return canonicalPath;
     return defaultPilotSessionManifestPath({
         resultDir: args.resultDir,
         pilotSessionId: args.pilotSessionIdOrPath,
@@ -202,14 +262,16 @@ export function resolvePilotSessionManifestPath(args: {
 
 export function listPilotSessionManifestPaths(resultDir: string): PilotSessionManifestMeta[] {
     try {
-        return fs.readdirSync(resultDir)
-            .filter((name) => name.endsWith(".session.json"))
-            .map((name) => {
-                const manifestPath = path.resolve(resultDir, name);
-                const stat = fs.statSync(manifestPath);
-                return stat.isFile()
-                    ? { manifestPath, mtimeMs: stat.mtimeMs }
-                    : null;
+        const sessionsDir = path.resolve(resultDir, "sessions");
+        return fs.readdirSync(sessionsDir)
+            .map((name) => path.resolve(sessionsDir, name, "session-manifest.json"))
+            .map((manifestPath) => {
+                try {
+                    const stat = fs.statSync(manifestPath);
+                    return stat.isFile() ? { manifestPath, mtimeMs: stat.mtimeMs } : null;
+                } catch {
+                    return null;
+                }
             })
             .filter((item): item is PilotSessionManifestMeta => item !== null)
             .sort((a, b) => b.mtimeMs - a.mtimeMs);

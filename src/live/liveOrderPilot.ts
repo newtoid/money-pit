@@ -17,6 +17,9 @@ import { buildLiveOrderSubmissionRequests, evaluateLiveSubmissionGuard } from ".
 import {
     createPilotSessionId,
     createPilotSessionManifest,
+    defaultPilotOrderBaselinePath,
+    defaultPilotResultPath,
+    defaultPilotSessionBundleDir,
     defaultPilotSessionManifestPath,
     writePilotSessionManifest,
 } from "./pilotSession";
@@ -85,11 +88,14 @@ function buildPilotExecutionRequest(args: {
 }
 
 function writePilotOrderBaseline(args: {
-    baselineDir: string;
-    executionAttemptId: string;
+    resultDir: string;
+    pilotSessionId: string;
     orderSnapshot: InternalOrderBaselineSnapshot;
 }) {
-    const outputPath = path.resolve(args.baselineDir, `${args.executionAttemptId}.orders.json`);
+    const outputPath = defaultPilotOrderBaselinePath({
+        resultDir: args.resultDir,
+        pilotSessionId: args.pilotSessionId,
+    });
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath, `${JSON.stringify([args.orderSnapshot], null, 2)}\n`, "utf8");
     return outputPath;
@@ -97,10 +103,13 @@ function writePilotOrderBaseline(args: {
 
 function writePilotResult(args: {
     resultDir: string;
-    executionAttemptId: string;
+    pilotSessionId: string;
     result: LiveOrderPilotResult;
 }) {
-    const outputPath = path.resolve(args.resultDir, `${args.executionAttemptId}.result.json`);
+    const outputPath = defaultPilotResultPath({
+        resultDir: args.resultDir,
+        pilotSessionId: args.pilotSessionId,
+    });
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.writeFileSync(outputPath, `${JSON.stringify(args.result, null, 2)}\n`, "utf8");
     return outputPath;
@@ -211,10 +220,14 @@ export async function runLiveOrderPilot(args: {
         orders: orderLifecycle.getAllOrderRecords(),
         fillEvents: orderLifecycle.getAllFillEvents(),
     })[0];
+    const sessionBundleDir = defaultPilotSessionBundleDir({
+        resultDir: args.config.resultDir,
+        pilotSessionId,
+    });
     const orderBaselinePath = baseline
         ? writePilotOrderBaseline({
-            baselineDir: args.config.baselineDir,
-            executionAttemptId: pilotSessionId,
+            resultDir: args.config.resultDir,
+            pilotSessionId,
             orderSnapshot: baseline,
         })
         : null;
@@ -241,7 +254,7 @@ export async function runLiveOrderPilot(args: {
 
     const resultOutputPath = writePilotResult({
         resultDir: args.config.resultDir,
-        executionAttemptId: pilotSessionId,
+        pilotSessionId,
         result,
     });
     result.resultOutputPath = resultOutputPath;
@@ -259,6 +272,18 @@ export async function runLiveOrderPilot(args: {
             terminalState: result.terminalState,
             createdAtMs: args.request.invokedAtMs,
             sourceLabel: args.config.logLabel,
+            manifestPath: defaultPilotSessionManifestPath({
+                resultDir: args.config.resultDir,
+                pilotSessionId,
+            }),
+            sessionBundleDir,
+            submissionParameters: {
+                side: args.request.side,
+                price: args.request.price,
+                size: args.request.size,
+                tickSize: args.request.tickSize,
+                timeInForce: args.request.timeInForce,
+            },
             rawSourceMetadata: {
                 requestSent: result.requestSent,
                 denied: result.denied,

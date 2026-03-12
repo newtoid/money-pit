@@ -1,7 +1,12 @@
 import { assertReadOnlyVenueSafety, loadReadOnlyVenueConfig } from "../config/readOnlyVenue";
 import { loadRealDataReconciliationConfig } from "../config/realDataReconciliation";
 import { runRealDataReconciliationProbe } from "../live/realDataReconciliationProbe";
-import { attachArtifactToPilotSession, readPilotSessionManifest, resolvePilotSessionManifestPath } from "../live/pilotSession";
+import {
+    attachArtifactToPilotSession,
+    defaultPilotReconciliationPath,
+    readPilotSessionManifest,
+    resolvePilotSessionManifestPath,
+} from "../live/pilotSession";
 import { loadLiveOrderPilotConfig } from "../config/liveOrderPilot";
 import { logger } from "../logger";
 
@@ -30,7 +35,10 @@ async function main() {
     const derivedOrderBaselinePath = pilotSessionManifest?.latestArtifactPaths.orderBaseline ?? null;
     const effectiveOutputPath = outputPathArg ?? (
         pilotSessionManifest
-            ? pilotSessionManifestPath!.replace(/\.session\.json$/i, ".reconcile.json")
+            ? defaultPilotReconciliationPath({
+                resultDir: livePilotConfig.resultDir,
+                pilotSessionId: pilotSessionManifest.pilotSessionId,
+            })
             : probeConfig.outputPath
     );
     assertReadOnlyVenueSafety(readOnlyVenueConfig);
