@@ -3,6 +3,7 @@ import path from "node:path";
 import {
     LivePilotTerminalState,
     PilotSessionArtifactRef,
+    PilotSessionBundleRef,
     PilotSessionArtifactType,
     PilotSessionCaptureResult,
     PilotSessionManifest,
@@ -84,6 +85,8 @@ export function createPilotSessionManifest(args: {
             verificationAttached: Boolean(latestArtifactPaths.verificationResult),
             reconciliationAttached: Boolean(latestArtifactPaths.reconciliationResult),
         },
+        latestBundleManifestPath: null,
+        bundleExports: [],
         missingArtifacts: missingArtifactsFromLatest(latestArtifactPaths),
         rawSourceMetadata: args.rawSourceMetadata ?? null,
     };
@@ -139,6 +142,8 @@ export function attachArtifactToPilotSession(args: {
             verificationAttached: Boolean(latestArtifactPaths.verificationResult),
             reconciliationAttached: Boolean(latestArtifactPaths.reconciliationResult),
         },
+        latestBundleManifestPath: manifest.latestBundleManifestPath ?? null,
+        bundleExports: manifest.bundleExports ?? [],
         missingArtifacts: missingArtifactsFromLatest(latestArtifactPaths),
     };
     return writePilotSessionManifest({
@@ -155,9 +160,32 @@ export function summarizePilotSessionManifest(manifest: PilotSessionManifest) {
         currentTerminalState: manifest.currentTerminalState,
         externalOrderId: manifest.externalOrderId,
         attachmentStatus: manifest.attachmentStatus,
+        latestBundleManifestPath: manifest.latestBundleManifestPath ?? null,
+        bundleExportCount: (manifest.bundleExports ?? []).length,
         latestArtifactPaths: manifest.latestArtifactPaths,
         missingArtifacts: manifest.missingArtifacts,
     };
+}
+
+export function recordPilotSessionBundleExport(args: {
+    manifestPath: string;
+    bundleRef: PilotSessionBundleRef;
+}): PilotSessionCaptureResult {
+    const manifest = readPilotSessionManifest(args.manifestPath);
+    const nextBundleExports = (manifest.bundleExports ?? [])
+        .filter((item) => item.bundleId !== args.bundleRef.bundleId)
+        .concat(args.bundleRef)
+        .sort((a, b) => a.exportedAtMs - b.exportedAtMs);
+    const nextManifest: PilotSessionManifest = {
+        ...manifest,
+        updatedAtMs: args.bundleRef.exportedAtMs,
+        latestBundleManifestPath: args.bundleRef.bundleManifestPath,
+        bundleExports: nextBundleExports,
+    };
+    return writePilotSessionManifest({
+        manifest: nextManifest,
+        manifestPath: args.manifestPath,
+    });
 }
 
 export function resolvePilotSessionManifestPath(args: {

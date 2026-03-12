@@ -34,6 +34,8 @@ async function main() {
             currentTerminalState: latestSession.manifest.currentTerminalState,
             attachmentStatus: latestSession.manifest.attachmentStatus,
             missingArtifacts: latestSession.manifest.missingArtifacts,
+            latestBundleManifestPath: latestSession.manifest.latestBundleManifestPath ?? null,
+            bundleExportCount: (latestSession.manifest.bundleExports ?? []).length,
         });
         process.stdout.write(`${JSON.stringify({ ...summary, manifestPath: latestSession.manifestPath }, null, 2)}\n`);
         return;
@@ -54,6 +56,8 @@ async function main() {
         currentTerminalState: manifest.currentTerminalState,
         attachmentStatus: manifest.attachmentStatus,
         missingArtifacts: manifest.missingArtifacts,
+        latestBundleManifestPath: manifest.latestBundleManifestPath ?? null,
+        bundleExportCount: (manifest.bundleExports ?? []).length,
     });
 
     process.stdout.write(`${JSON.stringify({ ...summary, manifestPath }, null, 2)}\n`);
