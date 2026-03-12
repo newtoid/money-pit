@@ -326,6 +326,7 @@ Behavior:
 - prints the current linked artifact paths
 - shows whether verification has been attached
 - shows whether reconciliation has been attached
+- shows latest bundle export status when present
 - shows which expected artifacts are still missing
 
 Important:
@@ -348,6 +349,35 @@ Behavior:
 - writes a reconciliation artifact
 - attaches that artifact to the pilot session manifest
 - does not mutate internal accounting or submit anything
+
+## Pilot Session Bundle Export
+
+Export a pilot session as one explicit operator bundle:
+
+```bash
+npm run live:session-export -- --session <pilot-session-id-or-manifest-path>
+```
+
+Or export the newest session:
+
+```bash
+npm run live:session-export -- --latest
+```
+
+Behavior:
+
+- loads the session manifest only
+- copies the current session manifest into a bundle directory
+- copies any present pilot result, order baseline, verification result, and reconciliation result into that bundle
+- writes a bundle manifest with explicit missing artifact types
+- records the latest bundle export back onto the session manifest
+
+Important:
+
+- this helper is manual and one-shot
+- it does not fetch venue data
+- it does not submit, cancel, verify, or reconcile anything by itself
+- missing artifacts remain missing; the exporter does not fabricate them
 
 ## Dashboard Visibility
 
@@ -375,6 +405,7 @@ The latest session card shows:
 - current terminal state
 - whether verification is attached
 - whether reconciliation is attached
+- latest bundle export path if present
 - aggregate gap counts across stored session manifests
 
 Those cards are file-backed status only. They do not submit orders, trigger verification, or poll in the background.

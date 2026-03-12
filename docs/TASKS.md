@@ -167,9 +167,15 @@
   - clearer missing-artifact reporting
   - repeatable reconciliation outputs linked by session
 
+- [x] Add pilot-session artifact capture/export for verification and reconciliation outputs as first-class operator bundles.
+  - manual `live:session-export` helper
+  - explicit bundle manifest and copied artifact set
+  - missing bundle artifact types kept machine-readable
+  - latest bundle status surfaced through session summaries
+
 ## Next Phase
 
-- [ ] Add pilot-session artifact capture/export for verification and reconciliation outputs as first-class operator bundles.
+- [ ] Add compact operator summary metrics and artifact-index views only if session-bundle usage shows a real operator need.
 
 ## Later
 

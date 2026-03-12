@@ -310,6 +310,22 @@ Consequence:
   - fully linked sessions
 - no loops, polling, retries, or live submission behavior are added by this observability layer
 
+### Export pilot sessions as explicit operator bundles instead of relying on loose linked files
+
+Reason:
+
+- once a pilot session has linked artifacts, operators still need a portable way to archive or inspect that session without manually gathering separate files
+- verification and reconciliation outputs should become first-class exported artifacts, not only paths inside the session manifest
+- export must stay manual and file-based so it does not drift into background orchestration
+
+Consequence:
+
+- there is now a dedicated read-only `live:session-export` helper
+- bundle export copies the current session manifest and any present pilot/baseline/verification/reconciliation artifacts into one bundle directory
+- bundle exports write their own bundle manifest with explicit missing artifact types
+- the session manifest records latest bundle export metadata
+- dashboard/session summaries now surface latest bundle status without adding loops, polling, or live behavior
+
 ### Add authenticated venue connectivity only through a dedicated read-only layer with hard safety gates
 
 Reason:
