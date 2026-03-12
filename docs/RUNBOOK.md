@@ -303,6 +303,28 @@ Important:
 - it does not poll, retry, cancel, or submit orders
 - it does not mutate portfolio or accounting state
 - partial or missing venue visibility is expected and reported explicitly
+- it now writes a default verification artifact under `data/pilots`, so the dashboard can show the latest verification status automatically
+
+## Dashboard Visibility
+
+Start the main runtime dashboard:
+
+```bash
+npm run start
+```
+
+Open:
+
+```text
+http://localhost:8787
+```
+
+The dashboard now includes read-only cards for:
+
+- latest live pilot result from `data/pilots/*.result.json`
+- latest post-submit verification result from `data/pilots/*.verify.json`
+
+Those cards are file-backed status only. They do not submit orders, trigger verification, or poll in the background.
 - configured pilot max size is less than or equal to the hard-coded absolute pilot cap
 - `--confirm` matches `LIVE_ORDER_PILOT_CONFIRMATION_VALUE`
 

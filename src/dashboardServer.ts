@@ -191,6 +191,8 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Force Flatten</div><div id="flatten" class="v"></div><div id="flatten2" class="small"></div></div>
       <div class="card span-3"><div class="k">Portfolio</div><div id="portfolio" class="v"></div><div id="portfolio2" class="small"></div><div id="portfolio3" class="small"></div></div>
       <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><div id="controlMode" class="small"></div><button id="layoutEditBtn" class="btn">Edit Layout</button> <button id="layoutResetBtn" class="btn">Reset</button><div id="controlMsg" class="small"></div></div></div>
+      <div class="card span-6"><div class="k">Live Pilot</div><div id="pilot" class="v"></div><div id="pilot2" class="small"></div><div id="pilot3" class="small"></div></div>
+      <div class="card span-6"><div class="k">Post-Submit Verify</div><div id="verify" class="v"></div><div id="verify2" class="small"></div><div id="verify3" class="small"></div></div>
 
       <div class="card span-12"><div class="k">Recent Events</div><pre id="events"></pre></div>
     </div>
@@ -209,6 +211,12 @@ function htmlPage() {
     function num(v, d=4){ return (v === null || v === undefined || Number.isNaN(Number(v))) ? "-" : Number(v).toFixed(d); }
     function usd(v){ return (v === null || v === undefined || Number.isNaN(Number(v))) ? "-" : ("$" + Number(v).toFixed(2)); }
     function dlt(v){ if (v === null || v === undefined || Number.isNaN(Number(v))) return "-"; return (v >= 0 ? "+" : "") + "$" + Number(v).toFixed(2); }
+    function shortPath(v){
+      if (!v) return '-';
+      const s = String(v);
+      const parts = s.split('/');
+      return parts.slice(-2).join('/') || s;
+    }
     function gateTag(label, ok){
       return '<span class="badge ' + (ok ? 'ok' : 'bad') + '">' + label + ': ' + (ok ? 'OK' : 'BLOCKED') + '</span>';
     }
@@ -673,6 +681,47 @@ function htmlPage() {
           const tradingToggle = document.getElementById('tradingToggle');
           tradingToggle.checked = !!controls.tradingEnabled;
         }
+
+        const liveOps = s.liveOps || {};
+        const pilot = (liveOps.pilot && liveOps.pilot.latest) || null;
+        const pilotCount = (liveOps.pilot && liveOps.pilot.count) || 0;
+        const verify = (liveOps.verification && liveOps.verification.latest) || null;
+        const verifyCount = (liveOps.verification && liveOps.verification.count) || 0;
+        const pilotState = pilot ? String(pilot.terminalState || '-') : 'no pilot result';
+        const pilotClass = pilot
+          ? (pilot.terminalState === 'submitted_acknowledged' ? 'ok' : (pilot.terminalState === 'denied' || pilot.terminalState === 'failed' ? 'bad' : 'warn'))
+          : 'warn';
+        document.getElementById('pilot').innerHTML =
+          '<span class="badge ' + pilotClass + '">' + pilotState + '</span>'
+          + (pilot && pilot.requestSent ? ' · sent' : ' · not sent')
+          + ' · files=' + pilotCount;
+        document.getElementById('pilot2').textContent = pilot
+          ? 'extOrder=' + (pilot.venueAck && pilot.venueAck.externalOrderId ? pilot.venueAck.externalOrderId : '-')
+            + ' · at=' + fmtTs(pilot.submittedAtMs || pilot.mtimeMs)
+            + ' · baseline=' + shortPath(pilot.internalOrderBaselinePath)
+          : 'No live pilot artifact found in data/pilots yet.';
+        document.getElementById('pilot3').textContent = pilot
+          ? 'result=' + shortPath(pilot.filePath)
+            + ' · ' + (pilot.message || '-')
+          : 'Run npm run live:submit-once for a manual one-shot pilot.';
+
+        const verifyClass = verify
+          ? ((verify.externalOrderIdFound && verify.orderReconciliationMatchedPilotBaseline) ? 'ok' : (verify.accountPartialCoverageOnly ? 'warn' : 'bad'))
+          : 'warn';
+        document.getElementById('verify').innerHTML =
+          '<span class="badge ' + verifyClass + '">' + (verify ? 'latest verify' : 'no verify result') + '</span>'
+          + ' · files=' + verifyCount
+          + (verify ? (' · extOrder=' + (verify.externalOrderIdFound ? 'seen' : 'not seen')) : '');
+        document.getElementById('verify2').textContent = verify
+          ? 'matchOrders=' + (verify.matchingOrderSnapshotCount ?? 0)
+            + ' · matchTrades=' + (verify.matchingTradeSnapshotCount ?? 0)
+            + ' · baseline=' + (verify.orderReconciliationMatchedPilotBaseline ? 'matched' : 'not matched')
+            + ' · accountPartial=' + (verify.accountPartialCoverageOnly ? 'yes' : 'no')
+          : 'Run npm run live:verify-once -- --pilot-result <file> to capture a one-shot verification artifact.';
+        document.getElementById('verify3').textContent = verify
+          ? 'result=' + shortPath(verify.filePath)
+            + ' · limitations=' + Object.entries(verify.limitationCounts || {}).map(([k,v]) => k + ':' + v).join(', ')
+          : 'Verification stays one-shot and read-only; no polling or retries are enabled.';
 
         document.getElementById('events').textContent =
           (s.events || []).map(e => '[' + fmtTs(e.at) + '] ' + e.type + ' ' + (e.msg || '')).join('\\n');

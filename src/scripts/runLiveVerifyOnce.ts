@@ -1,6 +1,8 @@
 import { assertReadOnlyVenueSafety, loadReadOnlyVenueConfig } from "../config/readOnlyVenue";
 import { runLivePostSubmitVerification } from "../live/livePostSubmitVerification";
+import { loadLiveOrderPilotConfig } from "../config/liveOrderPilot";
 import { logger } from "../logger";
+import path from "node:path";
 
 function getArgValue(flag: string) {
     const index = process.argv.indexOf(flag);
@@ -8,8 +10,17 @@ function getArgValue(flag: string) {
     return process.argv[index + 1] ?? null;
 }
 
+function defaultVerificationOutputPath(pilotResultPath: string, resultDir: string) {
+    const base = path.basename(pilotResultPath);
+    const verifyName = base.endsWith(".result.json")
+        ? base.replace(/\.result\.json$/i, ".verify.json")
+        : `${base}.verify.json`;
+    return path.resolve(resultDir, verifyName);
+}
+
 async function main() {
     const config = loadReadOnlyVenueConfig();
+    const pilotConfig = loadLiveOrderPilotConfig();
     assertReadOnlyVenueSafety(config);
     const pilotResultPath = getArgValue("--pilot-result");
     if (!pilotResultPath) {
@@ -17,7 +28,8 @@ async function main() {
     }
     const internalOrderBaselinePath = getArgValue("--order-baseline");
     const internalAccountBaselinePath = getArgValue("--account-baseline");
-    const outputPath = getArgValue("--output");
+    const outputPath = getArgValue("--output")
+        ?? defaultVerificationOutputPath(pilotResultPath, pilotConfig.resultDir);
 
     logger.info({
         msg: "starting one-shot post-submit verification",

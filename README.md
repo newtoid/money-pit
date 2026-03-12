@@ -38,6 +38,7 @@ npm run dev
 
 4. Open dashboard:
 - `http://localhost:8787`
+- this now includes read-only status cards for the latest one-shot live pilot and latest one-shot post-submit verification artifacts when they exist
 
 ## Scripts
 
@@ -48,6 +49,24 @@ npm run dev
 - `npm run arb:scan` - run the read-only binary arbitrage scanner
 - `npm run arb:paper` - run live paper trading on binary full-set arbitrage
 - `npm run arb:replay -- --input data/recordings/session.jsonl` - replay recorded arb sessions
+- `npm run live:submit-once -- --market ... --asset ... --price ... --size ... --tick-size ... --confirm ...` - run a single guarded live pilot order
+- `npm run live:verify-once -- --pilot-result data/pilots/<pilot>.result.json` - run a single read-only post-submit verification pass
+
+## Live Pilot Visibility
+
+The dashboard now surfaces:
+
+- latest live pilot result from `data/pilots/*.result.json`
+- latest post-submit verification result from `data/pilots/*.verify.json`
+
+Typical manual flow:
+
+```bash
+npm run live:submit-once -- --market <market> --asset <asset> --price <price> --size <tiny-size> --tick-size <tick-size> --confirm <confirmation>
+npm run live:verify-once -- --pilot-result data/pilots/<pilot>.result.json
+```
+
+`live:verify-once` now writes a default verification artifact under `data/pilots`, so the dashboard can display the latest verification result without any extra wiring.
 
 ## Binary Arb Scanner
 

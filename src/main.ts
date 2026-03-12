@@ -12,6 +12,7 @@ import {
 } from "./gamma/resolveMarketIdFromSlug";
 import { TradeEngine } from "./tradeEngine";
 import { startDashboardServer } from "./dashboardServer";
+import { readLiveOpsStatusSnapshot } from "./live/liveOpsStatus";
 import { runClobPreflight } from "./clobPreflight";
 import { SpotFeed } from "./spotFeed";
 import { SnapshotRecorder } from "./snapshotRecorder";
@@ -529,6 +530,7 @@ async function main() {
             performance: {
                 lastMarketNetAfterFeesUsdc,
             },
+            liveOps: readLiveOpsStatusSnapshot(),
             market: activeRuntime
                 ? {
                     slug: activeRuntime.slug,
