@@ -746,11 +746,13 @@ function htmlPage() {
         document.getElementById('session3').textContent =
           latestSession
             ? 'manifest=' + shortPath(latestSession.manifestPath)
+              + ' · bundle=' + (latestSession.latestBundleManifestPath ? shortPath(latestSession.latestBundleManifestPath) : 'not exported')
+              + ' · bundleExports=' + Number(latestSession.bundleExportCount || 0)
               + ' · gaps='
               + ' missingVerify:' + Number(sessionGaps.missingVerification || 0)
               + ', missingReconcile:' + Number(sessionGaps.missingReconciliation || 0)
               + ', fullyLinked:' + Number(sessionGaps.fullyLinked || 0)
-            : 'Session manifests link pilot result, baseline, verification, and optional reconciliation artifacts.';
+            : 'Session manifests link pilot result, baseline, verification, optional reconciliation, and exported session bundles.';
 
         document.getElementById('events').textContent =
           (s.events || []).map(e => '[' + fmtTs(e.at) + '] ' + e.type + ' ' + (e.msg || '')).join('\\n');

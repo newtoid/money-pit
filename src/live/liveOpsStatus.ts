@@ -25,6 +25,8 @@ export type LiveOpsStatusSnapshot = {
             externalOrderId: string | null;
             marketId: string | null;
             assetId: string | null;
+            latestBundleManifestPath: string | null;
+            bundleExportCount: number;
         } | null;
         count: number;
         countsByGap: {
@@ -32,6 +34,11 @@ export type LiveOpsStatusSnapshot = {
             missingReconciliation: number;
             fullyLinked: number;
         };
+        latestBundle: {
+            bundleManifestPath: string;
+            exportedAtMs: number;
+            missingArtifactTypes: string[];
+        } | null;
     };
     pilot: {
         latest: (LiveOrderPilotResult & LiveOpsArtifactMeta) | null;
@@ -135,10 +142,19 @@ export function readLiveOpsStatusSnapshot(): LiveOpsStatusSnapshot {
                     externalOrderId: latestSession.manifest.externalOrderId,
                     marketId: latestSession.manifest.marketId,
                     assetId: latestSession.manifest.assetId,
+                    latestBundleManifestPath: latestSession.manifest.latestBundleManifestPath ?? null,
+                    bundleExportCount: (latestSession.manifest.bundleExports ?? []).length,
                 }
                 : null,
             count: sessionEntries.length,
             countsByGap,
+            latestBundle: latestSession?.manifest.latestBundleManifestPath
+                ? {
+                    bundleManifestPath: latestSession.manifest.latestBundleManifestPath,
+                    exportedAtMs: ((latestSession.manifest.bundleExports ?? []).slice(-1)[0]?.exportedAtMs ?? null) ?? latestSession.mtimeMs,
+                    missingArtifactTypes: ((latestSession.manifest.bundleExports ?? []).slice(-1)[0]?.missingArtifactTypes ?? []),
+                }
+                : null,
         },
         pilot,
         verification,

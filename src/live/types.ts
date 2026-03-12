@@ -337,6 +337,8 @@ export type PilotSessionManifest = {
         verificationAttached: boolean;
         reconciliationAttached: boolean;
     };
+    latestBundleManifestPath?: string | null;
+    bundleExports?: PilotSessionBundleRef[];
     missingArtifacts: string[];
     rawSourceMetadata: Record<string, unknown> | null;
 };
@@ -345,6 +347,47 @@ export type PilotSessionCaptureResult = {
     pilotSessionId: string;
     manifestPath: string;
     manifest: PilotSessionManifest;
+};
+
+export type PilotSessionBundleArtifactRef = {
+    artifactType: PilotSessionArtifactType | "session_manifest";
+    sourcePath: string | null;
+    bundledPath: string | null;
+    status: "bundled" | "missing_source";
+    copiedAtMs: number;
+    notes: string[];
+};
+
+export type PilotSessionBundleManifest = {
+    bundleId: string;
+    pilotSessionId: string;
+    sourceSessionManifestPath: string;
+    bundleDir: string;
+    bundleManifestPath: string;
+    exportedAtMs: number;
+    sourceLabel: string;
+    currentTerminalState: PilotSessionManifest["currentTerminalState"];
+    artifacts: PilotSessionBundleArtifactRef[];
+    missingArtifactTypes: string[];
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type PilotSessionBundleRef = {
+    bundleId: string;
+    bundleManifestPath: string;
+    bundleDir: string;
+    exportedAtMs: number;
+    missingArtifactTypes: string[];
+};
+
+export type PilotSessionBundleExportResult = {
+    pilotSessionId: string;
+    bundleId: string;
+    bundleDir: string;
+    bundleManifestPath: string;
+    manifestPath: string;
+    bundleManifest: PilotSessionBundleManifest;
+    sessionManifest: PilotSessionManifest;
 };
 
 export type ExecutionStatusResult = {

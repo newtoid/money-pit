@@ -39,6 +39,8 @@ test("readLiveOpsStatusSnapshot summarizes latest session and session gap counts
                     verificationAttached: false,
                     reconciliationAttached: false,
                 },
+                latestBundleManifestPath: null,
+                bundleExports: [],
                 missingArtifacts: ["verification_result"],
                 rawSourceMetadata: null,
             },
@@ -67,6 +69,14 @@ test("readLiveOpsStatusSnapshot summarizes latest session and session gap counts
                     verificationAttached: true,
                     reconciliationAttached: true,
                 },
+                latestBundleManifestPath: "/tmp/session-b.bundle.json",
+                bundleExports: [{
+                    bundleId: "session-b-bundle-3000",
+                    bundleManifestPath: "/tmp/session-b.bundle.json",
+                    bundleDir: "/tmp/session-b.bundle",
+                    exportedAtMs: 3000,
+                    missingArtifactTypes: [],
+                }],
                 missingArtifacts: [],
                 rawSourceMetadata: null,
             },
@@ -81,9 +91,12 @@ test("readLiveOpsStatusSnapshot summarizes latest session and session gap counts
         assert.ok(snapshot.sessions.latest);
         assert.equal(snapshot.sessions.latest?.pilotSessionId, "session-b");
         assert.equal(snapshot.sessions.latest?.manifestPath, newerManifestPath);
+        assert.equal(snapshot.sessions.latest?.latestBundleManifestPath, "/tmp/session-b.bundle.json");
+        assert.equal(snapshot.sessions.latest?.bundleExportCount, 1);
         assert.equal(snapshot.sessions.countsByGap.missingVerification, 1);
         assert.equal(snapshot.sessions.countsByGap.missingReconciliation, 1);
         assert.equal(snapshot.sessions.countsByGap.fullyLinked, 1);
+        assert.equal(snapshot.sessions.latestBundle?.bundleManifestPath, "/tmp/session-b.bundle.json");
     } finally {
         if (previousResultDir === undefined) {
             delete process.env.LIVE_ORDER_PILOT_RESULT_DIR;
