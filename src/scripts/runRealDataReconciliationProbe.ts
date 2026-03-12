@@ -41,8 +41,6 @@ async function main() {
             })
             : probeConfig.outputPath
     );
-    assertReadOnlyVenueSafety(readOnlyVenueConfig);
-
     logger.info({
         msg: "starting real-data reconciliation probe",
         source: readOnlyVenueConfig.readOnlyLogLabel,
@@ -68,6 +66,8 @@ async function main() {
         });
         return;
     }
+
+    assertReadOnlyVenueSafety(readOnlyVenueConfig);
 
     const result = await runRealDataReconciliationProbe({
         readOnlyVenueConfig,
