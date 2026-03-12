@@ -206,6 +206,12 @@ Not yet implemented in this phase:
     - real-data reconciliation artifact when attached later
   - session manifests keep missing artifacts explicit instead of inferring them
   - operator tooling can inspect a session manifest without running any live or read-only fetches
+  - operator tooling can also inspect the newest session manifest directly with `npm run live:session-show -- --latest`
+  - dashboard status now surfaces:
+    - latest session id
+    - latest session terminal state
+    - verification/reconciliation attachment state
+    - session gap counts for missing verification / missing reconciliation / fully linked sessions
 - Order lifecycle scaffolding is now explicit and separate from execution attempts:
   - execution attempts model the strategy-level arb attempt lifecycle
   - order lifecycle records model per-leg order objects that would sit behind the adapter boundary
