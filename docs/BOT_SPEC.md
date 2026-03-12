@@ -207,6 +207,8 @@ Not yet implemented in this phase:
   - session manifests keep missing artifacts explicit instead of inferring them
   - operator tooling can inspect a session manifest without running any live or read-only fetches
   - operator tooling can also inspect the newest session manifest directly with `npm run live:session-show -- --latest`
+  - operator tooling can now export a first-class session bundle directly with `npm run live:session-export -- --session <id>` or `--latest`
+  - exported bundles copy the current session manifest plus any present pilot result, order baseline, verification result, and reconciliation result into one explicit directory
   - dashboard status now surfaces:
     - latest session id
     - latest session terminal state
