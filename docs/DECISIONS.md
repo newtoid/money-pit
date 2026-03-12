@@ -275,6 +275,23 @@ Consequence:
 - it reuses existing normalization, order reconciliation, accounting comparison, and balance reconciliation modules
 - it reports partial coverage and missing visibility explicitly instead of hiding them behind a binary success/failure result
 
+### Bundle one-shot pilot artifacts through an explicit session manifest
+
+Reason:
+
+- a pilot result file, baseline file, verification file, and later reconciliation output are operationally one session, not unrelated files
+- operators need a reproducible way to inspect and compare one-shot pilot runs without guessing file relationships
+- artifact linkage should remain explicit and file-based instead of hidden inside code paths or inferred from timestamps
+
+Consequence:
+
+- every one-shot pilot now creates a `pilotSessionId`
+- the pilot writes a session manifest under `data/pilots`
+- verification can attach its artifact to that same manifest
+- real-data reconciliation can later attach a reconciliation artifact when explicitly invoked with a pilot session
+- session manifests keep missing artifacts visible and machine-readable
+- no new live behavior, loops, or retries are introduced by this artifact layer
+
 ### Add authenticated venue connectivity only through a dedicated read-only layer with hard safety gates
 
 Reason:

@@ -152,10 +152,20 @@
   - fetches read-only order/trade/account data once
   - reuses existing normalization and reconciliation layers
   - reports explicit partial-visibility and missing-coverage limitations
+- [x] Add pilot session artifact bundling and indexing:
+  - explicit `pilotSessionId`
+  - session manifest linking pilot result and internal baseline
+  - post-submit verification attachment into the same session manifest
+  - optional reconciliation artifact attachment by session id
+  - read-only `live:session-show` operator helper
 
 ## Next Phase
 
-- [ ] Add explicit post-submit read-only verification result capture into repeatable reconciliation artifacts before any broader live execution work.
+- [ ] Improve operator-facing pilot session observability:
+  - latest-session discovery
+  - stronger dashboard/session summaries
+  - clearer missing-artifact reporting
+  - repeatable reconciliation outputs linked by session
 
 ## Later
 

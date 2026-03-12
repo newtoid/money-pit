@@ -72,6 +72,7 @@ This repo currently implements:
 - explicit live-order submission scaffolding with deny-by-default guards and a safe probe path
 - explicit one-shot live order submission pilot path for a single manual microscopic order under extreme safeguards
 - explicit one-shot post-submit read-only verification helpers for live pilot results using existing fetch, normalization, and reconciliation layers
+- explicit pilot-session artifact manifests that bundle pilot result, baseline, verification output, and optional reconciliation output into a single machine-readable session record
 
 Not yet implemented in this phase:
 
@@ -195,6 +196,16 @@ Not yet implemented in this phase:
     - whether account visibility was only partial
     - explicit fetch/normalization/reconciliation limitations
   - it does not poll, retry, cancel, or mutate portfolio/accounting state
+- Pilot-session artifact handling is now explicit:
+  - every one-shot pilot creates a `pilotSessionId`
+  - each pilot writes a session manifest under `data/pilots`
+  - the manifest links:
+    - pilot result artifact
+    - internal order baseline artifact
+    - post-submit verification artifact when attached
+    - real-data reconciliation artifact when attached later
+  - session manifests keep missing artifacts explicit instead of inferring them
+  - operator tooling can inspect a session manifest without running any live or read-only fetches
 - Order lifecycle scaffolding is now explicit and separate from execution attempts:
   - execution attempts model the strategy-level arb attempt lifecycle
   - order lifecycle records model per-leg order objects that would sit behind the adapter boundary

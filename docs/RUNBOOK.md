@@ -263,6 +263,7 @@ Pilot outputs include:
 
 - structured pilot result JSON
 - internal order baseline JSON for follow-up reconciliation
+- pilot session manifest JSON linking the session artifacts
 
 ## One-Shot Post-Submit Verification
 
@@ -304,6 +305,43 @@ Important:
 - it does not mutate portfolio or accounting state
 - partial or missing venue visibility is expected and reported explicitly
 - it now writes a default verification artifact under `data/pilots`, so the dashboard can show the latest verification status automatically
+
+## Pilot Session Inspection
+
+Show a pilot session manifest:
+
+```bash
+npm run live:session-show -- --session <pilot-session-id-or-manifest-path>
+```
+
+Behavior:
+
+- loads the session manifest only
+- prints the current linked artifact paths
+- shows whether verification has been attached
+- shows whether reconciliation has been attached
+- shows which expected artifacts are still missing
+
+Important:
+
+- this helper is read-only
+- it does not fetch venue data
+- it does not submit, cancel, verify, or reconcile anything by itself
+
+## Real-Data Reconciliation Attached To A Pilot Session
+
+You can attach a reconciliation output to an existing pilot session explicitly:
+
+```bash
+npm run venue:reconcile -- --pilot-session <pilot-session-id-or-manifest-path> --order-baseline data/baselines/internal-baseline.orders.json --account-baseline data/baselines/internal-baseline.account.json
+```
+
+Behavior:
+
+- runs the normal read-only reconciliation probe
+- writes a reconciliation artifact
+- attaches that artifact to the pilot session manifest
+- does not mutate internal accounting or submit anything
 
 ## Dashboard Visibility
 
