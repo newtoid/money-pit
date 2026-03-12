@@ -198,13 +198,26 @@ Not yet implemented in this phase:
   - it does not poll, retry, cancel, or mutate portfolio/accounting state
 - Pilot-session artifact handling is now explicit:
   - every one-shot pilot creates a `pilotSessionId`
-  - each pilot writes a session manifest under `data/pilots`
+  - each pilot writes a canonical session bundle under `data/pilots/sessions/<pilotSessionId>/`
   - the manifest links:
     - pilot result artifact
     - internal order baseline artifact
     - post-submit verification artifact when attached
     - real-data reconciliation artifact when attached later
+  - canonical filenames are now:
+    - `session-manifest.json`
+    - `pilot-result.json`
+    - `internal-baseline.orders.json`
+    - `verification-result.json`
+    - `reconciliation-result.json`
+  - session manifests now include explicit:
+    - `sessionId`
+    - `timestamp`
+    - `market`
+    - `asset`
+    - `submissionParameters`
   - session manifests keep missing artifacts explicit instead of inferring them
+  - artifact history is append-only; latest artifact pointers are derived alongside preserved history
   - operator tooling can inspect a session manifest without running any live or read-only fetches
   - operator tooling can also inspect the newest session manifest directly with `npm run live:session-show -- --latest`
   - operator tooling can now export a first-class session bundle directly with `npm run live:session-export -- --session <id>` or `--latest`

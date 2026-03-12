@@ -175,8 +175,8 @@
 
 ## Next Phase
 
-- [ ] Add compact operator summary metrics and artifact-index views only if session-bundle usage shows a real operator need.
+- [ ] No required next phase for current Definition of Done.
 
 ## Later
 
-- [ ] Add compact summary metrics and alarms.
+- [ ] Optional only: compact operator summary metrics and artifact-index views if real operator usage shows a clear need.

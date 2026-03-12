@@ -286,10 +286,17 @@ Reason:
 Consequence:
 
 - every one-shot pilot now creates a `pilotSessionId`
-- the pilot writes a session manifest under `data/pilots`
+- the pilot writes a canonical session bundle under `data/pilots/sessions/<pilotSessionId>/`
+- canonical artifact filenames are fixed:
+  - `session-manifest.json`
+  - `pilot-result.json`
+  - `internal-baseline.orders.json`
+  - `verification-result.json`
+  - `reconciliation-result.json`
 - verification can attach its artifact to that same manifest
 - real-data reconciliation can later attach a reconciliation artifact when explicitly invoked with a pilot session
 - session manifests keep missing artifacts visible and machine-readable
+- session manifests preserve append-only artifact history while also tracking latest artifact paths
 - no new live behavior, loops, or retries are introduced by this artifact layer
 
 ### Surface latest pilot-session state through read-only operator tooling

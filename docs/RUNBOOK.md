@@ -324,6 +324,7 @@ Behavior:
 
 - loads the session manifest only
 - prints the current linked artifact paths
+- shows canonical bundle location under `data/pilots/sessions/<pilotSessionId>/`
 - shows whether verification has been attached
 - shows whether reconciliation has been attached
 - shows latest bundle export status when present
@@ -346,7 +347,7 @@ npm run venue:reconcile -- --pilot-session <pilot-session-id-or-manifest-path> -
 Behavior:
 
 - runs the normal read-only reconciliation probe
-- writes a reconciliation artifact
+- writes `reconciliation-result.json` when attached to a pilot session
 - attaches that artifact to the pilot session manifest
 - does not mutate internal accounting or submit anything
 
@@ -368,7 +369,7 @@ Behavior:
 
 - loads the session manifest only
 - copies the current session manifest into a bundle directory
-- copies any present pilot result, order baseline, verification result, and reconciliation result into that bundle
+- copies any present canonical session artifacts into that bundle
 - writes a bundle manifest with explicit missing artifact types
 - records the latest bundle export back onto the session manifest
 
@@ -407,6 +408,14 @@ The latest session card shows:
 - whether reconciliation is attached
 - latest bundle export path if present
 - aggregate gap counts across stored session manifests
+
+Canonical pilot session files now live under:
+
+- `data/pilots/sessions/<pilotSessionId>/session-manifest.json`
+- `data/pilots/sessions/<pilotSessionId>/pilot-result.json`
+- `data/pilots/sessions/<pilotSessionId>/internal-baseline.orders.json`
+- `data/pilots/sessions/<pilotSessionId>/verification-result.json`
+- `data/pilots/sessions/<pilotSessionId>/reconciliation-result.json`
 
 Those cards are file-backed status only. They do not submit orders, trigger verification, or poll in the background.
 - configured pilot max size is less than or equal to the hard-coded absolute pilot cap
