@@ -6,6 +6,7 @@ import path from "node:path";
 import { runLiveOrderPilot } from "../src/live/liveOrderPilot";
 import { runLivePostSubmitVerification } from "../src/live/livePostSubmitVerification";
 import {
+    defaultPilotSessionBundleDir,
     readLatestPilotSessionManifest,
     readPilotSessionManifest,
     writePilotSessionManifest,
@@ -74,9 +75,19 @@ test("live order pilot creates a session manifest linked to result and baseline 
     assert.equal(result.pilotSessionId, "live-order-pilot-1000");
     assert.equal(fs.existsSync(result.pilotSessionManifestPath ?? ""), true);
     const manifest = readPilotSessionManifest(result.pilotSessionManifestPath!);
+    assert.equal(path.basename(result.pilotSessionManifestPath!), "session-manifest.json");
+    assert.equal(path.basename(result.resultOutputPath!), "pilot-result.json");
+    assert.equal(path.basename(result.internalOrderBaselinePath!), "internal-baseline.orders.json");
     assert.equal(manifest.pilotSessionId, result.pilotSessionId);
+    assert.equal(manifest.sessionId, result.pilotSessionId);
+    assert.equal(manifest.sessionManifestPath, result.pilotSessionManifestPath);
+    assert.equal(manifest.sessionBundleDir, defaultPilotSessionBundleDir({ resultDir: tempDir, pilotSessionId: result.pilotSessionId }));
+    assert.equal(manifest.market, "market-1");
+    assert.equal(manifest.asset, "asset-1");
+    assert.equal(manifest.submissionParameters.size, 0.01);
     assert.equal(manifest.latestArtifactPaths.pilotResult, result.resultOutputPath);
     assert.equal(manifest.latestArtifactPaths.orderBaseline, result.internalOrderBaselinePath);
+    assert.equal(manifest.artifacts.length, 2);
     assert.equal(manifest.attachmentStatus.verificationAttached, false);
     assert.equal(manifest.missingArtifacts.includes("verification_result"), true);
   });
@@ -115,7 +126,7 @@ test("post-submit verification attaches its artifact to the pilot session manife
             },
         },
     });
-    const verificationPath = path.join(tempDir, "verification.json");
+    const verificationPath = path.join(tempDir, "sessions", pilot.pilotSessionId, "verification-result.json");
 
     const verification = await runLivePostSubmitVerification({
         readOnlyVenueConfig: baseReadOnlyConfig(),
@@ -159,24 +170,39 @@ test("post-submit verification attaches its artifact to the pilot session manife
     assert.equal(manifest.attachmentStatus.verificationAttached, true);
     assert.equal(manifest.latestArtifactPaths.verificationResult, verificationPath);
     assert.equal(manifest.currentTerminalState, "verification_recorded");
+    assert.equal(manifest.artifacts.filter((item) => item.artifactType === "verification_result").length, 1);
+    assert.equal(manifest.artifacts.length, 3);
 });
 
 test("readLatestPilotSessionManifest returns the newest manifest by mtime", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pilot-session-latest-"));
-    const olderManifestPath = path.join(tempDir, "older.session.json");
-    const newerManifestPath = path.join(tempDir, "newer.session.json");
+    const olderManifestPath = path.join(tempDir, "sessions", "older-session", "session-manifest.json");
+    const newerManifestPath = path.join(tempDir, "sessions", "newer-session", "session-manifest.json");
 
     writePilotSessionManifest({
         manifestPath: olderManifestPath,
         manifest: {
+            sessionId: "older-session",
             pilotSessionId: "older-session",
+            sessionManifestPath: olderManifestPath,
+            sessionBundleDir: path.dirname(olderManifestPath),
             sourceLabel: "test",
+            timestamp: 1000,
             createdAtMs: 1000,
             updatedAtMs: 1000,
             executionAttemptId: "older-exec",
+            market: "market-1",
             marketId: "market-1",
+            asset: "asset-1",
             assetId: "asset-1",
             externalOrderId: null,
+            submissionParameters: {
+                side: "buy",
+                price: 0.01,
+                size: 0.01,
+                tickSize: "0.001",
+                timeInForce: "GTC",
+            },
             currentTerminalState: "submitted_acknowledged",
             artifacts: [],
             latestArtifactPaths: {
@@ -197,14 +223,27 @@ test("readLatestPilotSessionManifest returns the newest manifest by mtime", () =
     writePilotSessionManifest({
         manifestPath: newerManifestPath,
         manifest: {
+            sessionId: "newer-session",
             pilotSessionId: "newer-session",
+            sessionManifestPath: newerManifestPath,
+            sessionBundleDir: path.dirname(newerManifestPath),
             sourceLabel: "test",
+            timestamp: 2000,
             createdAtMs: 2000,
             updatedAtMs: 2000,
             executionAttemptId: "newer-exec",
+            market: "market-2",
             marketId: "market-2",
+            asset: "asset-2",
             assetId: "asset-2",
             externalOrderId: "ext-1",
+            submissionParameters: {
+                side: "buy",
+                price: 0.01,
+                size: 0.01,
+                tickSize: "0.001",
+                timeInForce: "GTC",
+            },
             currentTerminalState: "verification_recorded",
             artifacts: [],
             latestArtifactPaths: {

@@ -13,20 +13,33 @@ test("readLiveOpsStatusSnapshot summarizes latest session and session gap counts
     try {
         process.env.LIVE_ORDER_PILOT_RESULT_DIR = tempDir;
 
-        const olderManifestPath = path.join(tempDir, "session-a.session.json");
-        const newerManifestPath = path.join(tempDir, "session-b.session.json");
+        const olderManifestPath = path.join(tempDir, "sessions", "session-a", "session-manifest.json");
+        const newerManifestPath = path.join(tempDir, "sessions", "session-b", "session-manifest.json");
 
         writePilotSessionManifest({
             manifestPath: olderManifestPath,
             manifest: {
+                sessionId: "session-a",
                 pilotSessionId: "session-a",
+                sessionManifestPath: olderManifestPath,
+                sessionBundleDir: path.dirname(olderManifestPath),
                 sourceLabel: "test",
+                timestamp: 1000,
                 createdAtMs: 1000,
                 updatedAtMs: 1000,
                 executionAttemptId: "exec-a",
+                market: "market-a",
                 marketId: "market-a",
+                asset: "asset-a",
                 assetId: "asset-a",
                 externalOrderId: null,
+                submissionParameters: {
+                    side: "buy",
+                    price: 0.01,
+                    size: 0.01,
+                    tickSize: "0.001",
+                    timeInForce: "GTC",
+                },
                 currentTerminalState: "submitted_acknowledged",
                 artifacts: [],
                 latestArtifactPaths: {
@@ -49,14 +62,27 @@ test("readLiveOpsStatusSnapshot summarizes latest session and session gap counts
         writePilotSessionManifest({
             manifestPath: newerManifestPath,
             manifest: {
+                sessionId: "session-b",
                 pilotSessionId: "session-b",
+                sessionManifestPath: newerManifestPath,
+                sessionBundleDir: path.dirname(newerManifestPath),
                 sourceLabel: "test",
+                timestamp: 2000,
                 createdAtMs: 2000,
                 updatedAtMs: 2000,
                 executionAttemptId: "exec-b",
+                market: "market-b",
                 marketId: "market-b",
+                asset: "asset-b",
                 assetId: "asset-b",
                 externalOrderId: "ext-b",
+                submissionParameters: {
+                    side: "buy",
+                    price: 0.01,
+                    size: 0.01,
+                    tickSize: "0.001",
+                    timeInForce: "GTC",
+                },
                 currentTerminalState: "reconciliation_recorded",
                 artifacts: [],
                 latestArtifactPaths: {

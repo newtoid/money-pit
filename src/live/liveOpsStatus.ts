@@ -58,14 +58,31 @@ function safeReadDir(dirPath: string): string[] {
     }
 }
 
+function listJsonFilesRecursive(dirPath: string): string[] {
+    const results: string[] = [];
+    for (const entry of safeReadDir(dirPath)) {
+        const fullPath = path.resolve(dirPath, entry);
+        try {
+            const stat = fs.statSync(fullPath);
+            if (stat.isDirectory()) {
+                results.push(...listJsonFilesRecursive(fullPath));
+            } else if (stat.isFile()) {
+                results.push(fullPath);
+            }
+        } catch {
+            // ignore unreadable entries
+        }
+    }
+    return results;
+}
+
 function latestJsonArtifact<T>(args: {
     dirPath: string;
-    fileSuffix: string;
+    fileName: string;
 }): { latest: (T & LiveOpsArtifactMeta) | null; count: number } {
-    const entries = safeReadDir(args.dirPath)
-        .filter((name) => name.endsWith(args.fileSuffix))
-        .map((name) => {
-            const filePath = path.resolve(args.dirPath, name);
+    const entries = listJsonFilesRecursive(args.dirPath)
+        .filter((filePath) => path.basename(filePath) === args.fileName)
+        .map((filePath) => {
             try {
                 const stat = fs.statSync(filePath);
                 if (!stat.isFile()) return null;
@@ -101,11 +118,11 @@ export function readLiveOpsStatusSnapshot(): LiveOpsStatusSnapshot {
     const pilotConfig = loadLiveOrderPilotConfig();
     const pilot = latestJsonArtifact<LiveOrderPilotResult>({
         dirPath: pilotConfig.resultDir,
-        fileSuffix: ".result.json",
+        fileName: "pilot-result.json",
     });
     const verification = latestJsonArtifact<LivePostSubmitVerificationResult>({
         dirPath: pilotConfig.resultDir,
-        fileSuffix: ".verify.json",
+        fileName: "verification-result.json",
     });
     const sessionEntries = listPilotSessionManifestPaths(pilotConfig.resultDir);
     const latestSession = readLatestPilotSessionManifest(pilotConfig.resultDir);

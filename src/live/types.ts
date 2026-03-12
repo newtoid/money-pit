@@ -317,14 +317,27 @@ export type PilotSessionArtifactRef = {
 };
 
 export type PilotSessionManifest = {
+    sessionId: string;
     pilotSessionId: string;
+    sessionManifestPath: string | null;
+    sessionBundleDir: string | null;
     sourceLabel: string;
+    timestamp: number;
     createdAtMs: number;
     updatedAtMs: number;
     executionAttemptId: string;
+    market: string | null;
     marketId: string | null;
+    asset: string | null;
     assetId: string | null;
     externalOrderId: string | null;
+    submissionParameters: {
+        side: "buy" | "sell";
+        price: number;
+        size: number;
+        tickSize: string;
+        timeInForce: "GTC";
+    };
     currentTerminalState: LivePilotTerminalState | "verification_recorded" | "reconciliation_recorded";
     artifacts: PilotSessionArtifactRef[];
     latestArtifactPaths: {
