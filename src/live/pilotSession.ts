@@ -8,6 +8,11 @@ import {
     PilotSessionManifest,
 } from "./types";
 
+export type PilotSessionManifestMeta = {
+    manifestPath: string;
+    mtimeMs: number;
+};
+
 function missingArtifactsFromLatest(args: PilotSessionManifest["latestArtifactPaths"]) {
     const missing: string[] = [];
     if (!args.pilotResult) missing.push("pilot_result");
@@ -167,3 +172,32 @@ export function resolvePilotSessionManifestPath(args: {
     });
 }
 
+export function listPilotSessionManifestPaths(resultDir: string): PilotSessionManifestMeta[] {
+    try {
+        return fs.readdirSync(resultDir)
+            .filter((name) => name.endsWith(".session.json"))
+            .map((name) => {
+                const manifestPath = path.resolve(resultDir, name);
+                const stat = fs.statSync(manifestPath);
+                return stat.isFile()
+                    ? { manifestPath, mtimeMs: stat.mtimeMs }
+                    : null;
+            })
+            .filter((item): item is PilotSessionManifestMeta => item !== null)
+            .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    } catch {
+        return [];
+    }
+}
+
+export function readLatestPilotSessionManifest(resultDir: string) {
+    const entries = listPilotSessionManifestPaths(resultDir);
+    const latest = entries[0];
+    if (!latest) return null;
+    return {
+        manifest: readPilotSessionManifest(latest.manifestPath),
+        manifestPath: latest.manifestPath,
+        mtimeMs: latest.mtimeMs,
+        count: entries.length,
+    };
+}

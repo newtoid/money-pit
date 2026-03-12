@@ -191,8 +191,9 @@ function htmlPage() {
       <div class="card span-3"><div class="k">Force Flatten</div><div id="flatten" class="v"></div><div id="flatten2" class="small"></div></div>
       <div class="card span-3"><div class="k">Portfolio</div><div id="portfolio" class="v"></div><div id="portfolio2" class="small"></div><div id="portfolio3" class="small"></div></div>
       <div class="card span-3"><div class="k">Controls</div><div id="controls" class="v"></div><div class="small"><label><input type="checkbox" id="tradingToggle" /> Trading Enabled</label><div id="controlMode" class="small"></div><button id="layoutEditBtn" class="btn">Edit Layout</button> <button id="layoutResetBtn" class="btn">Reset</button><div id="controlMsg" class="small"></div></div></div>
-      <div class="card span-6"><div class="k">Live Pilot</div><div id="pilot" class="v"></div><div id="pilot2" class="small"></div><div id="pilot3" class="small"></div></div>
-      <div class="card span-6"><div class="k">Post-Submit Verify</div><div id="verify" class="v"></div><div id="verify2" class="small"></div><div id="verify3" class="small"></div></div>
+      <div class="card span-4"><div class="k">Live Pilot</div><div id="pilot" class="v"></div><div id="pilot2" class="small"></div><div id="pilot3" class="small"></div></div>
+      <div class="card span-4"><div class="k">Post-Submit Verify</div><div id="verify" class="v"></div><div id="verify2" class="small"></div><div id="verify3" class="small"></div></div>
+      <div class="card span-4"><div class="k">Latest Session</div><div id="session" class="v"></div><div id="session2" class="small"></div><div id="session3" class="small"></div></div>
 
       <div class="card span-12"><div class="k">Recent Events</div><pre id="events"></pre></div>
     </div>
@@ -722,6 +723,34 @@ function htmlPage() {
           ? 'result=' + shortPath(verify.filePath)
             + ' · limitations=' + Object.entries(verify.limitationCounts || {}).map(([k,v]) => k + ':' + v).join(', ')
           : 'Verification stays one-shot and read-only; no polling or retries are enabled.';
+
+        const sessions = liveOps.sessions || {};
+        const latestSession = sessions.latest || null;
+        const sessionCount = Number(sessions.count || 0);
+        const sessionGaps = sessions.countsByGap || {};
+        const sessionClass = latestSession
+          ? ((latestSession.attachmentStatus && latestSession.attachmentStatus.verificationAttached && latestSession.attachmentStatus.reconciliationAttached)
+            ? 'ok'
+            : ((latestSession.attachmentStatus && latestSession.attachmentStatus.verificationAttached) ? 'warn' : 'bad'))
+          : 'warn';
+        document.getElementById('session').innerHTML =
+          '<span class="badge ' + sessionClass + '">' + (latestSession ? String(latestSession.currentTerminalState || '-') : 'no session') + '</span>'
+          + ' · files=' + sessionCount
+          + (latestSession ? (' · id=' + latestSession.pilotSessionId) : '');
+        document.getElementById('session2').textContent = latestSession
+          ? 'verify=' + ((latestSession.attachmentStatus && latestSession.attachmentStatus.verificationAttached) ? 'attached' : 'missing')
+            + ' · reconcile=' + ((latestSession.attachmentStatus && latestSession.attachmentStatus.reconciliationAttached) ? 'attached' : 'missing')
+            + ' · extOrder=' + (latestSession.externalOrderId || '-')
+            + ' · at=' + fmtTs(latestSession.mtimeMs)
+          : 'Run npm run live:session-show -- --latest after a pilot to inspect the newest session manifest.';
+        document.getElementById('session3').textContent =
+          latestSession
+            ? 'manifest=' + shortPath(latestSession.manifestPath)
+              + ' · gaps='
+              + ' missingVerify:' + Number(sessionGaps.missingVerification || 0)
+              + ', missingReconcile:' + Number(sessionGaps.missingReconciliation || 0)
+              + ', fullyLinked:' + Number(sessionGaps.fullyLinked || 0)
+            : 'Session manifests link pilot result, baseline, verification, and optional reconciliation artifacts.';
 
         document.getElementById('events').textContent =
           (s.events || []).map(e => '[' + fmtTs(e.at) + '] ' + e.type + ' ' + (e.msg || '')).join('\\n');
