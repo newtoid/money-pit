@@ -282,6 +282,8 @@ export type LiveOrderPilotRequest = {
 };
 
 export type LiveOrderPilotResult = {
+    pilotSessionId: string;
+    pilotSessionManifestPath: string | null;
     terminalState: LivePilotTerminalState;
     requestSent: boolean;
     denied: boolean;
@@ -295,6 +297,54 @@ export type LiveOrderPilotResult = {
         recommendedReconcileCommand: string;
     };
     message: string;
+};
+
+export type PilotSessionArtifactType =
+    | "pilot_result"
+    | "order_baseline"
+    | "verification_result"
+    | "reconciliation_result";
+
+export type PilotSessionArtifactStatus = "present" | "missing";
+
+export type PilotSessionArtifactRef = {
+    artifactType: PilotSessionArtifactType;
+    artifactPath: string;
+    attachedAtMs: number;
+    status: PilotSessionArtifactStatus;
+    provenance: "pilot_runtime_output" | "post_submit_verification_output" | "real_data_reconciliation_output";
+    notes: string[];
+};
+
+export type PilotSessionManifest = {
+    pilotSessionId: string;
+    sourceLabel: string;
+    createdAtMs: number;
+    updatedAtMs: number;
+    executionAttemptId: string;
+    marketId: string | null;
+    assetId: string | null;
+    externalOrderId: string | null;
+    currentTerminalState: LivePilotTerminalState | "verification_recorded" | "reconciliation_recorded";
+    artifacts: PilotSessionArtifactRef[];
+    latestArtifactPaths: {
+        pilotResult: string | null;
+        orderBaseline: string | null;
+        verificationResult: string | null;
+        reconciliationResult: string | null;
+    };
+    attachmentStatus: {
+        verificationAttached: boolean;
+        reconciliationAttached: boolean;
+    };
+    missingArtifacts: string[];
+    rawSourceMetadata: Record<string, unknown> | null;
+};
+
+export type PilotSessionCaptureResult = {
+    pilotSessionId: string;
+    manifestPath: string;
+    manifest: PilotSessionManifest;
 };
 
 export type ExecutionStatusResult = {
