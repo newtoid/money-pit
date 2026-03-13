@@ -309,6 +309,7 @@ export class TradeEngine {
     private lastOpenOrdersFetchAt = 0;
     private lastCancelAllCallAt = 0;
     private openOrdersRateLimitedUntil = 0;
+    private insufficientBalanceBackoffUntil = 0;
     private openYesOrdersCache: any[] = [];
     private openNoOrdersCache: any[] = [];
     private lastForceFlattenSyncWarnAt = 0;
@@ -994,27 +995,64 @@ export class TradeEngine {
                 if (buySize > 0) {
                     const requiredBuyRaw = BigInt(Math.ceil(effectiveBid * buySize * 1_000_000));
                     if (availableRaw >= requiredBuyRaw) {
-                        await this.clobClient.createAndPostOrder(
-                            {
-                                tokenID: this.yesTokenId,
-                                side: Side.BUY,
-                                size: buySize,
-                                price: effectiveBid,
-                            },
-                            { tickSize: String(this.tickSize) as any },
-                            OrderType.GTC,
-                        );
-                        buyPlaced = true;
-                        this.state.buyOrdersPlaced += 1;
+                        try {
+                            await this.clobClient.createAndPostOrder(
+                                {
+                                    tokenID: this.yesTokenId,
+                                    side: Side.BUY,
+                                    size: buySize,
+                                    price: effectiveBid,
+                                },
+                                { tickSize: String(this.tickSize) as any },
+                                OrderType.GTC,
+                            );
+                            buyPlaced = true;
+                            this.state.buyOrdersPlaced += 1;
+                        } catch (err) {
+                            if (this.isInsufficientBalanceOrAllowanceError(err)) {
+                                this.state.skippedInsufficientCollateral += 1;
+                                this.insufficientBalanceBackoffUntil = Date.now() + 15000;
+                                buySkippedReason = "insufficient_collateral_or_allowance";
+                                const warnAt = Date.now();
+                                if (warnAt - this.lastInsufficientCollateralLogAt > 5000) {
+                                    logger.warn(
+                                        {
+                                            marketId: this.marketId,
+                                            tokenId: this.yesTokenId,
+                                            requiredBuyRaw: requiredBuyRaw.toString(),
+                                            availableRaw: availableRaw.toString(),
+                                            backoffUntil: this.insufficientBalanceBackoffUntil,
+                                            err: err instanceof Error ? err.message : String(err),
+                                        },
+                                        "Skipping BUY quote after venue balance/allowance rejection",
+                                    );
+                                    this.lastInsufficientCollateralLogAt = warnAt;
+                                }
+                            } else {
+                                this.state.orderErrors += 1;
+                                buySkippedReason = "buy_post_failed";
+                                logger.error(
+                                    {
+                                        marketId: this.marketId,
+                                        yesTokenId: this.yesTokenId,
+                                        attemptedBuySize: buySize,
+                                        err: err instanceof Error ? err.message : String(err),
+                                    },
+                                    "BUY post failed",
+                                );
+                            }
+                        }
                     } else {
                         buySkippedReason = "insufficient_collateral";
                         this.state.skippedInsufficientCollateral += 1;
                         const now = Date.now();
+                        this.insufficientBalanceBackoffUntil = now + 15000;
                         if (now - this.lastInsufficientCollateralLogAt > 5000) {
                             logger.warn(
                                 {
                                     requiredBuyRaw: requiredBuyRaw.toString(),
                                     availableRaw: availableRaw.toString(),
+                                    backoffUntil: this.insufficientBalanceBackoffUntil,
                                     skippedCount: this.state.skippedInsufficientCollateral,
                                 },
                                 "Skipping BUY quote: insufficient collateral/allowance",
@@ -1782,18 +1820,83 @@ export class TradeEngine {
         let sellSkippedReason: string | null = null;
 
         if (buySize > 0) {
-            await this.clobClient.createAndPostOrder(
-                {
-                    tokenID: this.noTokenId,
-                    side: Side.BUY,
-                    size: buySize,
-                    price: noBid,
-                },
-                { tickSize: String(this.tickSize) as any },
-                OrderType.GTC,
-            );
-            this.state.buyOrdersPlaced += 1;
-            buyPlaced = true;
+            const now = Date.now();
+            if (now < this.insufficientBalanceBackoffUntil) {
+                buySkippedReason = "balance_allowance_backoff_active";
+            } else {
+                await this.refreshCollateral();
+                const availableRaw = this.collateral.balanceRaw < this.collateral.allowanceRaw
+                    ? this.collateral.balanceRaw
+                    : this.collateral.allowanceRaw;
+                const requiredBuyRaw = BigInt(Math.ceil(noBid * buySize * 1_000_000));
+
+                if (availableRaw >= requiredBuyRaw) {
+                    try {
+                        await this.clobClient.createAndPostOrder(
+                            {
+                                tokenID: this.noTokenId,
+                                side: Side.BUY,
+                                size: buySize,
+                                price: noBid,
+                            },
+                            { tickSize: String(this.tickSize) as any },
+                            OrderType.GTC,
+                        );
+                        this.state.buyOrdersPlaced += 1;
+                        buyPlaced = true;
+                    } catch (err) {
+                        if (this.isInsufficientBalanceOrAllowanceError(err)) {
+                            this.state.skippedInsufficientCollateral += 1;
+                            this.insufficientBalanceBackoffUntil = Date.now() + 15000;
+                            buySkippedReason = "insufficient_collateral_or_allowance";
+                            const warnAt = Date.now();
+                            if (warnAt - this.lastInsufficientCollateralLogAt > 5000) {
+                                logger.warn(
+                                    {
+                                        marketId: this.marketId,
+                                        tokenId: this.noTokenId,
+                                        requiredBuyRaw: requiredBuyRaw.toString(),
+                                        availableRaw: availableRaw.toString(),
+                                        backoffUntil: this.insufficientBalanceBackoffUntil,
+                                        err: err instanceof Error ? err.message : String(err),
+                                    },
+                                    "Skipping NO BUY quote after venue balance/allowance rejection",
+                                );
+                                this.lastInsufficientCollateralLogAt = warnAt;
+                            }
+                        } else {
+                            this.state.orderErrors += 1;
+                            buySkippedReason = "buy_post_failed";
+                            logger.error(
+                                {
+                                    marketId: this.marketId,
+                                    noTokenId: this.noTokenId,
+                                    attemptedBuySize: buySize,
+                                    err: err instanceof Error ? err.message : String(err),
+                                },
+                                "NO BUY post failed",
+                            );
+                        }
+                    }
+                } else {
+                    buySkippedReason = "insufficient_collateral";
+                    this.state.skippedInsufficientCollateral += 1;
+                    this.insufficientBalanceBackoffUntil = now + 15000;
+                    if (now - this.lastInsufficientCollateralLogAt > 5000) {
+                        logger.warn(
+                            {
+                                tokenId: this.noTokenId,
+                                requiredBuyRaw: requiredBuyRaw.toString(),
+                                availableRaw: availableRaw.toString(),
+                                backoffUntil: this.insufficientBalanceBackoffUntil,
+                                skippedCount: this.state.skippedInsufficientCollateral,
+                            },
+                            "Skipping NO BUY quote: insufficient collateral/allowance",
+                        );
+                        this.lastInsufficientCollateralLogAt = now;
+                    }
+                }
+            }
         } else {
             buySkippedReason = buyGateReason ?? "size_below_constraints_or_risk_cap";
         }
